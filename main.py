@@ -27,12 +27,14 @@ def voice():
         </Response>
         """, mimetype="application/xml")
 
-    except Exception as e:
+        except Exception as e:
+        print("ERROR from OpenAI:", e)
         return Response("""
         <Response>
             <Say>Sorry, something went wrong with our system. We'll call you back shortly. Thank you.</Say>
         </Response>
         """, mimetype="application/xml")
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
