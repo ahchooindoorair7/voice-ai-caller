@@ -4,18 +4,15 @@ import os
 
 app = Flask(__name__)
 
-# Log all incoming requests
 @app.before_request
 def log_request_info():
     print("📥 Incoming request:", request.method, request.path, flush=True)
 
-# Fallback root route
 @app.route("/", methods=["GET", "POST"])
 def root():
     print("🏠 Hit root route!", flush=True)
     return "Voice AI is running."
 
-# Main voice webhook
 @app.route("/voice", methods=["POST"])
 def voice():
     print("🟢 Twilio POST /voice received", flush=True)
@@ -28,9 +25,9 @@ def voice():
 
         client = openai.OpenAI(api_key=api_key)
 
-        print("📡 Sending prompt to GPT-4...", flush=True)
+        print("📡 Sending prompt to GPT-4.1 (gpt-4o)...", flush=True)
         chat_completion = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a friendly AI sales rep."},
                 {"role": "user", "content": prompt}
@@ -38,7 +35,7 @@ def voice():
         )
 
         reply = chat_completion.choices[0].message.content.strip()
-        print("✅ GPT-4 replied:", reply, flush=True)
+        print("✅ GPT-4o replied:", reply, flush=True)
 
         return Response(f"""
         <Response>
