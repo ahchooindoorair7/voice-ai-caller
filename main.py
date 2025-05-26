@@ -7,28 +7,28 @@ app = Flask(__name__)
 # Log all incoming requests
 @app.before_request
 def log_request_info():
-    print("📥 Incoming request:", request.method, request.path)
+    print("📥 Incoming request:", request.method, request.path, flush=True)
 
-# Fallback route for root URL
+# Fallback root route
 @app.route("/", methods=["GET", "POST"])
 def root():
-    print("🏠 Hit root route!")
+    print("🏠 Hit root route!", flush=True)
     return "Voice AI is running."
 
-# Main Twilio webhook
+# Main voice webhook
 @app.route("/voice", methods=["POST"])
 def voice():
-    print("🟢 Twilio POST /voice received")
+    print("🟢 Twilio POST /voice received", flush=True)
 
     prompt = "You are Nick from AH-CHOO! Air Duct Cleaning. Greet the caller and offer a free estimate."
 
     try:
         api_key = os.environ.get("OPENAI_API_KEY")
-        print("🔐 API key loaded:", bool(api_key))
+        print("🔐 API key loaded:", bool(api_key), flush=True)
 
         client = openai.OpenAI(api_key=api_key)
 
-        print("📡 Sending prompt to GPT-4...")
+        print("📡 Sending prompt to GPT-4...", flush=True)
         chat_completion = client.chat.completions.create(
             model="gpt-4",
             messages=[
@@ -38,7 +38,7 @@ def voice():
         )
 
         reply = chat_completion.choices[0].message.content.strip()
-        print("✅ GPT-4 replied:", reply)
+        print("✅ GPT-4 replied:", reply, flush=True)
 
         return Response(f"""
         <Response>
@@ -47,7 +47,7 @@ def voice():
         """, mimetype="application/xml")
 
     except Exception as e:
-        print("❌ ERROR from OpenAI:", e)
+        print("❌ ERROR from OpenAI:", e, flush=True)
         return Response("""
         <Response>
             <Say>Sorry, something went wrong with our system. We'll call you back shortly. Thank you.</Say>
@@ -56,7 +56,7 @@ def voice():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Starting server on port {port}")
+    print(f"🚀 Starting server on port {port}", flush=True)
     app.run(host="0.0.0.0", port=port)
 
 
