@@ -9,7 +9,7 @@ app = Flask(__name__)
 # Load keys
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = "sk_28e9af6168313208486554115e37bd8f06db2c2bf68f75f2"
-ELEVENLABS_VOICE_ID = "UgBBYS2sOqTuMpoF3BR0"  # ✅ Your real voice ID
+ELEVENLABS_VOICE_ID = "1SM7GgM6IMuvQlz2BwM3"  # ✅ Your real voice ID
 
 # Create OpenAI client
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
