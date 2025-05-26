@@ -4,12 +4,6 @@ import os
 
 app = Flask(__name__)
 
-# Confirm OpenAI key is being pulled
-print("OPENAI_API_KEY present:", bool(os.environ.get("OPENAI_API_KEY")))
-
-# Create OpenAI client
-client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
 @app.route("/voice", methods=["POST"])
 def voice():
     print("🟢 Twilio POST /voice received")
@@ -17,6 +11,12 @@ def voice():
     prompt = "You are Nick from AH-CHOO! Air Duct Cleaning. Greet the caller and offer a free estimate."
 
     try:
+        # Create OpenAI client inside the route
+        api_key = os.environ.get("OPENAI_API_KEY")
+        print("🔐 API key loaded:", bool(api_key))
+
+        client = openai.OpenAI(api_key=api_key)
+
         print("📡 Sending prompt to GPT-4...")
         chat_completion = client.chat.completions.create(
             model="gpt-4",
@@ -47,4 +47,5 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)
+
 
