@@ -4,6 +4,18 @@ import os
 
 app = Flask(__name__)
 
+# Log all incoming requests, no matter what route
+@app.before_request
+def log_request_info():
+    print("📥 Incoming request:", request.method, request.path)
+
+# Catch any hits to root (/) for debugging
+@app.route("/", methods=["GET", "POST"])
+def root():
+    print("🏠 Hit root route!")
+    return "Voice AI is running."
+
+# Main Twilio voice webhook
 @app.route("/voice", methods=["POST"])
 def voice():
     print("🟢 Twilio POST /voice received")
@@ -11,10 +23,11 @@ def voice():
     prompt = "You are Nick from AH-CHOO! Air Duct Cleaning. Greet the caller and offer a free estimate."
 
     try:
-        # Create OpenAI client inside the route
+        # Load OpenAI API key
         api_key = os.environ.get("OPENAI_API_KEY")
         print("🔐 API key loaded:", bool(api_key))
 
+        # Create OpenAI client
         client = openai.OpenAI(api_key=api_key)
 
         print("📡 Sending prompt to GPT-4...")
@@ -45,7 +58,7 @@ def voice():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Starting server on port {port}")
-    app.run(host="0.0.0.0", port=port)
+    print(f"🚀 Starting server on port {port}
+
 
 
