@@ -4,30 +4,38 @@ import os
 
 app = Flask(__name__)
 
-openai.api_key = os.environ["OPENAI_API_KEY"]
+client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    prompt = "You are Nick from AH-CHOO! Air Duct Cleaning. Politely greet the customer and offer a free estimate."
+    prompt = "You are Nick from AH-CHOO! Air Duct Cleaning. Greet the caller and offer a free estimate."
 
-    gpt_response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a friendly AI sales rep."},
-            {"role": "user", "content": prompt}
-        ]
-    )
+    try:
+        chat_completion = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a friendly AI sales rep."},
+                {"role": "user", "content": prompt}
+            ]
+        )
 
-    reply = gpt_response["choices"][0]["message"]["content"]
+        reply = chat_completion.choices[0].message.content.strip()
 
-    twiml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="Polly.Matthew">{reply}</Say>
-</Response>"""
+        return Response(f"""
+        <Response>
+            <Say voice="Polly.Matthew">{reply}</Say>
+        </Response>
+        """, mimetype="application/xml")
 
-    return Response(twiml_response, mimetype="application/xml")
+    except Exception as e:
+        return Response("""
+        <Response>
+            <Say>Sorry, something went wrong with our system. We'll call you back shortly. Thank you.</Say>
+        </Response>
+        """, mimetype="application/xml")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
