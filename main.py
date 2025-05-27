@@ -59,7 +59,10 @@ def build_zip_prompt(user_zip, matches):
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    user_input = "I live in Sugar Land"  # Placeholder — replace with transcription later
+    # 👂 Get transcription from Twilio webhook
+    user_input = request.form.get('SpeechResult', '') or request.form.get('TranscriptionText', '')
+
+    print(f"📥 Incoming speech: {user_input}", flush=True)
     user_zip = extract_zip_or_city(user_input)
 
     creds_data = {
@@ -88,7 +91,7 @@ def voice():
     chat_completion = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Your goal is to book customers for an estimate and schedule estimates in close proximity to eachother based off the zip code the customer gives you on the phone. Cross reference that with the scheduled bookings on my google calendar. Ask the caller for their ZIP code so you can check your calendar and book a free estimate nearby."},
+            {"role": "system", "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Your goal is to sound friendly and helpful. Ask the caller for their ZIP code so you can check your calendar and book a free estimate nearby."},
             {"role": "user", "content": response_text}
         ]
     )
@@ -111,34 +114,8 @@ def voice():
     )
 
     if response.status_code != 200:
-        print("❌ ElevenLabs error:", response.status_code, response.text, flush=True)
-        return Response("""
-        <Response>
-            <Say>Sorry, something went wrong. We'll call you back shortly.</Say>
-        </Response>
-        """, mimetype="application/xml")
+       
 
-    filename = f"{uuid.uuid4()}.mp3"
-    filepath = f"static/{filename}"
-    if not os.path.exists("static"):
-        os.makedirs("static")
-    with open(filepath, "wb") as f:
-        f.write(response.content)
-
-    return Response(f"""
-    <Response>
-        <Play>https://{request.host}/static/{filename}</Play>
-    </Response>
-    """, mimetype="application/xml")
-
-@app.route("/", methods=["GET"])
-def root():
-    return "Nick AI Voice Agent is running."
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Starting server on port {port}", flush=True)
-    app.run(host="0.0.0.0", port=port)
 
 
 
