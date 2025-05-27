@@ -24,15 +24,15 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN")
 
-TOKEN_PATH = "token_store.json"
 CONVO_PATH = "conversation_store.json"
+SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 city_to_zip = {
     "houston": "77002", "sugar land": "77479", "katy": "77494",
     "the woodlands": "77380", "cypress": "77429", "bellaire": "77401", "tomball": "77375"
 }
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
@@ -60,15 +60,21 @@ def build_zip_prompt(user_zip, matches):
         return f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day works best?"
 
 def load_credentials():
-    if not os.path.exists(TOKEN_PATH):
+    token_json = os.environ.get("GOOGLE_TOKEN")
+    if not token_json:
+        print("❌ No GOOGLE_TOKEN environment variable found.")
         return None
-    with open(TOKEN_PATH, 'r') as token_file:
-        data = json.load(token_file)
-    return Credentials.from_authorized_user_info(data, SCOPES)
+    try:
+        data = json.loads(token_json)
+        return Credentials.from_authorized_user_info(data, SCOPES)
+    except Exception as e:
+        print("❌ Failed to load credentials from GOOGLE_TOKEN:", e)
+        return None
 
-def save_credentials(creds):
-    with open(TOKEN_PATH, 'w') as token_file:
-        token_file.write(creds.to_json())
+def save_credentials_to_env(creds):
+    token_data = creds.to_json()
+    print("🔐 Copy this token and paste into your Render environment as GOOGLE_TOKEN:")
+    print(token_data)
 
 def load_conversation(sid):
     if not os.path.exists(CONVO_PATH):
@@ -134,8 +140,8 @@ def oauth2callback():
             redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
         )
         flow.fetch_token(authorization_response=request.url)
-        save_credentials(flow.credentials)
-        return "✅ Authorization complete! You can close this window."
+        save_credentials_to_env(flow.credentials)
+        return "✅ COPY THIS TOKEN from logs and paste it into your Render environment as GOOGLE_TOKEN."
     except Exception as e:
         return f"❌ Failed to authorize: {e}"
 
@@ -170,8 +176,8 @@ def voice():
                 creds = load_credentials()
                 if creds and creds.expired and creds.refresh_token:
                     creds.refresh(Request())
-                    save_credentials(creds)
-                    print("🔁 Google credentials refreshed.", flush=True)
+                    print("🔁 Credentials refreshed")
+                    save_credentials_to_env(creds)
                 service = build('calendar', 'v3', credentials=creds)
                 now = datetime.datetime.utcnow().isoformat() + 'Z'
                 events = service.events().list(calendarId='primary', timeMin=now,
@@ -236,12 +242,13 @@ def voice():
 
 @app.route("/", methods=["GET"])
 def root():
-    return "Nick AI Voice Agent is running with persistent calendar auth, ElevenLabs, and memory."
+    return "Nick AI Voice Agent is running with secure token memory."
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}", flush=True)
     app.run(host="0.0.0.0", port=port)
+
 
 
 
