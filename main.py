@@ -108,7 +108,7 @@ def voice():
 
         system_msg = {
             "role": "system",
-            "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
+            "content": "You are Nick from Ah-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
         }
         if not any(m.get("role") == "system" for m in history):
             history.insert(0, system_msg)
