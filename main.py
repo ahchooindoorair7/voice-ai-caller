@@ -122,7 +122,40 @@ def voice():
             intro_msg = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
         else:
             intro_msg = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
+
         history.append({"role": "assistant", "content": intro_msg})
+        save_conversation(sid, history)
+
+        tts = requests.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+            headers={
+                "xi-api-key": ELEVENLABS_API_KEY,
+                "Content-Type": "application/json"
+            },
+            json={
+                "text": intro_msg,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {"stability": 0.4, "similarity_boost": 1.0}
+            }
+        )
+
+        if tts.status_code != 200:
+            print("❌ ElevenLabs error (intro):", tts.status_code, tts.text, flush=True)
+            return Response("<Response><Say>Sorry, something went wrong with the voice system.</Say></Response>", mimetype="application/xml")
+
+        filename = f"{uuid.uuid4()}.mp3"
+        filepath = f"static/{filename}"
+        if not os.path.exists("static"):
+            os.makedirs("static")
+        with open(filepath, "wb") as f:
+            f.write(tts.content)
+
+        return Response(f"""
+        <Response>
+            <Play>https://{request.host}/static/{filename}</Play>
+            <Gather input="speech" action="/voice" method="POST" timeout="5" />
+        </Response>
+        """, mimetype="application/xml")
 
     if "goodbye" in user_input.lower():
         clear_conversation(sid)
@@ -196,7 +229,12 @@ def voice():
     with open(filepath, "wb") as f:
         f.write(tts.content)
 
-    return Response(f"<Response><Play>https://{request.host}/static/{filename}</Play><Gather input='speech' action='/voice' method='POST' timeout='5' /></Response>", mimetype="application/xml")
+    return Response(f"""
+    <Response>
+        <Play>https://{request.host}/static/{filename}</Play>
+        <Gather input="speech" action="/voice" method="POST" timeout="5" />
+    </Response>
+    """, mimetype="application/xml")
 
 @app.route("/", methods=["GET"])
 def root():
