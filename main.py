@@ -46,7 +46,7 @@ city_to_zip = {
 }
 
 FAQ_RESPONSES = {
-    "price": "Our air duct cleaning service starts at $399, but pricing can vary depending on home size.",
+    "price": "So as you saw in the ad video we clean the full hvac system. Since that is the case, we do free in-home estimates so we can see exactly what needs to be done. Then we know what our time & materials will be, so we could give you a price. We don't like to play the whole add-on upcharge game. Whatever price we give you will stay there. Would you rather an afternoon, or night appointment? We do estimates until 9pm!",
     "cost": "Most homes fall in the $399 to $799 range depending on size and number of systems.",
     "what do you do": "We clean air ducts, sanitize HVAC systems, and improve your indoor air quality.",
     "services": "We specialize in whole-home air duct cleaning and HVAC sanitation.",
@@ -115,7 +115,7 @@ def voice():
         if direction == "inbound":
             greeting = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. How can I help you?"
         elif direction == "outbound-api":
-            greeting = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. You requested info about our air duct cleaning service. What’s your ZIP code so I can check availability?"
+            greeting = "Hey, this is Nick with AhCHOO Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
         else:
             greeting = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
 
