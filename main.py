@@ -71,11 +71,6 @@ def load_credentials():
         print("❌ Failed to load credentials from GOOGLE_TOKEN:", e)
         return None
 
-def save_credentials_to_env(creds):
-    token_data = creds.to_json()
-    print("🔐 Copy this token and paste into your Render environment as GOOGLE_TOKEN:")
-    print(token_data)
-
 def load_conversation(sid):
     if not os.path.exists(CONVO_PATH):
         return []
@@ -140,8 +135,13 @@ def oauth2callback():
             redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
         )
         flow.fetch_token(authorization_response=request.url)
-        save_credentials_to_env(flow.credentials)
-        return "✅ COPY THIS TOKEN from logs and paste it into your Render environment as GOOGLE_TOKEN."
+
+        token_data = flow.credentials.to_json()
+        print("\n\n🔐 COPY THIS TOKEN ↓↓↓\n")
+        print(token_data)
+        print("\n🔐 Paste this token into your Render Environment as: GOOGLE_TOKEN\n")
+
+        return "✅ Token printed to Render Logs. Go copy it now."
     except Exception as e:
         return f"❌ Failed to authorize: {e}"
 
@@ -177,7 +177,6 @@ def voice():
                 if creds and creds.expired and creds.refresh_token:
                     creds.refresh(Request())
                     print("🔁 Credentials refreshed")
-                    save_credentials_to_env(creds)
                 service = build('calendar', 'v3', credentials=creds)
                 now = datetime.datetime.utcnow().isoformat() + 'Z'
                 events = service.events().list(calendarId='primary', timeMin=now,
@@ -242,12 +241,13 @@ def voice():
 
 @app.route("/", methods=["GET"])
 def root():
-    return "Nick AI Voice Agent is running with secure token memory."
+    return "Nick AI Voice Agent is running."
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}", flush=True)
     app.run(host="0.0.0.0", port=port)
+
 
 
 
