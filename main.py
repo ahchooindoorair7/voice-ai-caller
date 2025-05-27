@@ -6,10 +6,11 @@ import requests
 import openai
 import re
 
-from flask import Flask, request, Response
+from flask import Flask, request, Response, redirect
 from flask_session import Session
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 
 app = Flask(__name__)
@@ -65,6 +66,10 @@ def load_credentials():
         data = json.load(token_file)
     return Credentials.from_authorized_user_info(data, SCOPES)
 
+def save_credentials(creds):
+    with open(TOKEN_PATH, 'w') as token_file:
+        token_file.write(creds.to_json())
+
 def load_conversation(sid):
     if not os.path.exists(CONVO_PATH):
         return []
@@ -92,6 +97,48 @@ def clear_conversation(sid):
             with open(CONVO_PATH, 'w') as f:
                 json.dump(all_data, f)
 
+@app.route("/authorize")
+def authorize():
+    flow = Flow.from_client_config(
+        {
+            "installed": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token"
+            }
+        },
+        scopes=SCOPES,
+        redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
+    )
+    auth_url, state = flow.authorization_url(
+        access_type='offline',
+        prompt='consent',
+        include_granted_scopes='true'
+    )
+    return redirect(auth_url)
+
+@app.route("/oauth2callback")
+def oauth2callback():
+    try:
+        flow = Flow.from_client_config(
+            {
+                "installed": {
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token"
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
+        )
+        flow.fetch_token(authorization_response=request.url)
+        save_credentials(flow.credentials)
+        return "✅ Authorization complete! You can close this window."
+    except Exception as e:
+        return f"❌ Failed to authorize: {e}"
+
 @app.route("/voice", methods=["POST"])
 def voice():
     try:
@@ -109,7 +156,7 @@ def voice():
 
         system_msg = {
             "role": "system",
-            "content": "You are Nick from Ah-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
+            "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
         }
         if not any(m.get("role") == "system" for m in history):
             history.insert(0, system_msg)
@@ -123,6 +170,7 @@ def voice():
                 creds = load_credentials()
                 if creds and creds.expired and creds.refresh_token:
                     creds.refresh(Request())
+                    save_credentials(creds)
                     print("🔁 Google credentials refreshed.", flush=True)
                 service = build('calendar', 'v3', credentials=creds)
                 now = datetime.datetime.utcnow().isoformat() + 'Z'
@@ -188,7 +236,7 @@ def voice():
 
 @app.route("/", methods=["GET"])
 def root():
-    return "Nick AI Voice Agent is running with calendar + memory + debug logging."
+    return "Nick AI Voice Agent is running with persistent calendar auth, ElevenLabs, and memory."
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
