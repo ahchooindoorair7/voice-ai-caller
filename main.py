@@ -59,10 +59,9 @@ def build_zip_prompt(user_zip, matches):
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    user_input = "I live in Sugar Land"  # Placeholder — replace with actual transcription
+    user_input = "I live in Sugar Land"  # Placeholder — replace with transcription later
     user_zip = extract_zip_or_city(user_input)
 
-    # PERMANENT CALENDAR CREDENTIALS
     creds_data = {
         'token': os.environ.get('GOOGLE_TOKEN'),
         'refresh_token': None,
@@ -82,7 +81,7 @@ def voice():
         matches = get_calendar_zip_matches(user_zip, events)
         response_text = build_zip_prompt(user_zip, matches)
     except Exception as e:
-        print("❌ Calendar error:", e)
+        print("❌ Calendar error:", e, flush=True)
         response_text = "Sorry, I couldn't access the calendar right now. Can I still help you schedule a free estimate?"
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -111,14 +110,13 @@ def voice():
         }
     )
 
-   if response.status_code != 200:
-    print("❌ ElevenLabs error:", response.status_code, response.text, flush=True)
-    return Response("""
-    <Response>
-        <Say>Sorry, something went wrong. We'll call you back shortly.</Say>
-    </Response>
-    """, mimetype="application/xml")
-
+    if response.status_code != 200:
+        print("❌ ElevenLabs error:", response.status_code, response.text, flush=True)
+        return Response("""
+        <Response>
+            <Say>Sorry, something went wrong. We'll call you back shortly.</Say>
+        </Response>
+        """, mimetype="application/xml")
 
     filename = f"{uuid.uuid4()}.mp3"
     filepath = f"static/{filename}"
@@ -141,5 +139,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}", flush=True)
     app.run(host="0.0.0.0", port=port)
+
 
 
