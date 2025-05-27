@@ -1,4 +1,5 @@
 from flask import Flask, request, Response, redirect, session, url_for
+from flask_session import Session
 import openai
 import os
 import uuid
@@ -11,6 +12,8 @@ import google.oauth2.credentials
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
+app.config['SESSION_TYPE'] = 'filesystem'
+Session(app)
 
 # Keys and config
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
