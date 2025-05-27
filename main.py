@@ -172,6 +172,10 @@ def voice():
         user_input = request.form.get("SpeechResult", "").strip()
         sid = request.form.get("CallSid", str(uuid.uuid4()))
         print(f"🗣️ [{sid}] Transcribed: {user_input}", flush=True)
+    except Exception as e:
+        print(f"❌ Failed to capture SpeechResult: {e}", flush=True)
+        return Response("<Response><Say>Sorry, we couldn't understand you. Please try again.</Say></Response>", mimetype="application/xml")
+
 
         if "goodbye" in user_input.lower():
             clear_conversation(sid)
