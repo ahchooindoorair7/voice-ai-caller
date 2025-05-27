@@ -98,64 +98,24 @@ def clear_conversation(sid):
             with open(CONVO_PATH, 'w') as f:
                 json.dump(all_data, f)
 
-@app.route("/authorize")
-def authorize():
-    flow = Flow.from_client_config(
-        {
-            "installed": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token"
-            }
-        },
-        scopes=SCOPES,
-        redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
-    )
-    auth_url, state = flow.authorization_url(
-        access_type='offline',
-        prompt='consent',
-        include_granted_scopes='true'
-    )
-    return redirect(auth_url)
-
-@app.route("/oauth2callback")
-def oauth2callback():
-    try:
-        flow = Flow.from_client_config(
-            {
-                "installed": {
-                    "client_id": GOOGLE_CLIENT_ID,
-                    "client_secret": GOOGLE_CLIENT_SECRET,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token"
-                }
-            },
-            scopes=SCOPES,
-            redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
-        )
-        flow.fetch_token(authorization_response=request.url)
-
-        token_data = flow.credentials.to_json()
-        print("\n\n🔐 COPY THIS TOKEN ↓↓↓\n")
-        print(token_data)
-        print("\n🔐 Paste this token into your Render Environment as: GOOGLE_TOKEN\n")
-
-        return "✅ Token printed to Render Logs. Go copy it now."
-    except Exception as e:
-        return f"❌ Failed to authorize: {e}"
-
 @app.route("/voice", methods=["POST"])
 def voice():
     direction = request.form.get("Direction", "").lower()
     print(f"🔄 Call Direction: {direction}", flush=True)
 
-    sid = request.form.get("CallSid", str(uuid.uuid4()))
+    try:
+        sid = request.form.get("CallSid", str(uuid.uuid4()))
+        user_input = request.form.get("SpeechResult", "").strip()
+        print(f"🗣️ [{sid}] Transcribed: {user_input}", flush=True)
+    except Exception as e:
+        print(f"❌ Failed to capture SpeechResult: {e}", flush=True)
+        return Response("<Response><Say>Sorry, we couldn't understand you. Please try again later.</Say></Response>", mimetype="application/xml")
+
     history = load_conversation(sid)
     if not isinstance(history, list):
         history = []
 
-    if not history:  # Only prepend initial greeting once
+    if not history:
         if direction == "inbound":
             intro_msg = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. How can I help you?"
         elif direction == "outbound-api":
@@ -164,105 +124,79 @@ def voice():
             intro_msg = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
         history.append({"role": "assistant", "content": intro_msg})
 
-    try:
-        user_input = request.form.get("SpeechResult", "").strip()
-        print(f"🗣️ [{sid}] Transcribed: {user_input}", flush=True)
+    if "goodbye" in user_input.lower():
+        clear_conversation(sid)
+        return Response("<Response><Say>Okay, goodbye! Thanks for calling.</Say><Hangup/></Response>", mimetype="application/xml")
 
-    try:
-        user_input = request.form.get("SpeechResult", "").strip()
-        sid = request.form.get("CallSid", str(uuid.uuid4()))
-        print(f"🗣️ [{sid}] Transcribed: {user_input}", flush=True)
-    except Exception as e:
-        print(f"❌ Failed to capture SpeechResult: {e}", flush=True)
-        return Response("<Response><Say>Sorry, we couldn't understand you. Please try again.</Say></Response>", mimetype="application/xml")
+    system_msg = {
+        "role": "system",
+        "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
+    }
+    if not any(m.get("role") == "system" for m in history):
+        history.insert(0, system_msg)
 
+    user_zip = extract_zip_or_city(user_input)
+    print(f"📍 ZIP extracted: {user_zip}", flush=True)
 
-        if "goodbye" in user_input.lower():
-            clear_conversation(sid)
-            return Response("<Response><Say>Okay, goodbye! Thanks for calling.</Say><Hangup/></Response>", mimetype="application/xml")
+    calendar_reply = ""
+    if user_zip:
+        try:
+            creds = load_credentials()
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                print("🔁 Credentials refreshed")
+            service = build('calendar', 'v3', credentials=creds)
+            now = datetime.datetime.utcnow().isoformat() + 'Z'
+            events = service.events().list(calendarId='primary', timeMin=now,
+                                           maxResults=10, singleEvents=True,
+                                           orderBy='startTime').execute().get('items', [])
+            matches = get_calendar_zip_matches(user_zip, events)
+            calendar_reply = build_zip_prompt(user_zip, matches)
+            print(f"📅 Calendar reply: {calendar_reply}", flush=True)
+        except Exception as e:
+            print("❌ Calendar access error:", e, flush=True)
+            calendar_reply = "Sorry, I couldn't check our calendar. But I can still help you schedule something."
 
-        history = load_conversation(sid)
-        if not isinstance(history, list):
-            history = []
+    history.append({"role": "user", "content": user_input})
+    if calendar_reply:
+        history.append({"role": "assistant", "content": calendar_reply})
 
-        system_msg = {
-            "role": "system",
-            "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    chat_completion = client.chat.completions.create(
+        model="gpt-4o",
+        messages=history
+    )
+    reply = chat_completion.choices[0].message.content.strip()
+    print(f"🤖 GPT reply: {reply}", flush=True)
+
+    history.append({"role": "assistant", "content": reply})
+    save_conversation(sid, history)
+
+    tts = requests.post(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
+        headers={
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "Content-Type": "application/json"
+        },
+        json={
+            "text": reply,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {"stability": 0.4, "similarity_boost": 1.0}
         }
-        if not any(m.get("role") == "system" for m in history):
-            history.insert(0, system_msg)
+    )
 
-        user_zip = extract_zip_or_city(user_input)
-        print(f"📍 ZIP extracted: {user_zip}", flush=True)
+    if tts.status_code != 200:
+        print("❌ ElevenLabs error:", tts.status_code, tts.text, flush=True)
+        return Response("<Response><Say>Sorry, something went wrong with the voice system.</Say></Response>", mimetype="application/xml")
 
-        calendar_reply = ""
-        if user_zip:
-            try:
-                creds = load_credentials()
-                if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                    print("🔁 Credentials refreshed")
-                service = build('calendar', 'v3', credentials=creds)
-                now = datetime.datetime.utcnow().isoformat() + 'Z'
-                events = service.events().list(calendarId='primary', timeMin=now,
-                                               maxResults=10, singleEvents=True,
-                                               orderBy='startTime').execute().get('items', [])
-                matches = get_calendar_zip_matches(user_zip, events)
-                calendar_reply = build_zip_prompt(user_zip, matches)
-                print(f"📅 Calendar reply: {calendar_reply}", flush=True)
-            except Exception as e:
-                print("❌ Calendar access error:", e, flush=True)
-                calendar_reply = "Sorry, I couldn't check our calendar. But I can still help you schedule something."
+    filename = f"{uuid.uuid4()}.mp3"
+    filepath = f"static/{filename}"
+    if not os.path.exists("static"):
+        os.makedirs("static")
+    with open(filepath, "wb") as f:
+        f.write(tts.content)
 
-        history.append({"role": "user", "content": user_input})
-        if calendar_reply:
-            history.append({"role": "assistant", "content": calendar_reply})
-
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        chat_completion = client.chat.completions.create(
-            model="gpt-4o",
-            messages=history
-        )
-        reply = chat_completion.choices[0].message.content.strip()
-        print(f"🤖 GPT reply: {reply}", flush=True)
-
-        history.append({"role": "assistant", "content": reply})
-        save_conversation(sid, history)
-
-        tts = requests.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
-            headers={
-                "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json"
-            },
-            json={
-                "text": reply,
-                "model_id": "eleven_multilingual_v2",
-                "voice_settings": {"stability": 0.4, "similarity_boost": 1.0}
-            }
-        )
-
-        if tts.status_code != 200:
-            print("❌ ElevenLabs error:", tts.status_code, tts.text, flush=True)
-            return Response("<Response><Say>Sorry, something went wrong with the voice system.</Say></Response>", mimetype="application/xml")
-
-        filename = f"{uuid.uuid4()}.mp3"
-        filepath = f"static/{filename}"
-        if not os.path.exists("static"):
-            os.makedirs("static")
-        with open(filepath, "wb") as f:
-            f.write(tts.content)
-
-        return Response(f"""
-        <Response>
-            <Play>https://{request.host}/static/{filename}</Play>
-            <Gather input="speech" action="/voice" method="POST" timeout="5" />
-        </Response>
-        """, mimetype="application/xml")
-
-    except Exception as e:
-        print("❌ Fatal error in /voice:", e, flush=True)
-        return Response("<Response><Say>We are sorry, an application error has occurred. Goodbye.</Say><Hangup/></Response>", mimetype="application/xml")
+    return Response(f"<Response><Play>https://{request.host}/static/{filename}</Play><Gather input='speech' action='/voice' method='POST' timeout='5' /></Response>", mimetype="application/xml")
 
 @app.route("/", methods=["GET"])
 def root():
