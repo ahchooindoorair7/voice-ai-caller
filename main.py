@@ -59,10 +59,18 @@ def build_zip_prompt(user_zip, matches):
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    # 👂 Get transcription from Twilio webhook
-    user_input = request.form.get('SpeechResult', '') or request.form.get('TranscriptionText', '')
+    user_input = request.form.get("SpeechResult", "").strip()
+    print(f"🗣️ Transcribed: {user_input}", flush=True)
 
-    print(f"📥 Incoming speech: {user_input}", flush=True)
+    if not user_input:
+        return Response("""
+        <Response>
+            <Gather input="speech" timeout="3">
+                <Say>Hi! This is Nick from AH-CHOO Indoor Air Quality. Could you tell me your ZIP code so I can check our calendar for a free estimate?</Say>
+            </Gather>
+        </Response>
+        """, mimetype="application/xml")
+
     user_zip = extract_zip_or_city(user_input)
 
     creds_data = {
@@ -114,6 +122,35 @@ def voice():
     )
 
     if response.status_code != 200:
+        print("❌ ElevenLabs error:", response.status_code, response.text, flush=True)
+        return Response("""
+        <Response>
+            <Say>Sorry, something went wrong. We'll call you back shortly.</Say>
+        </Response>
+        """, mimetype="application/xml")
+
+    filename = f"{uuid.uuid4()}.mp3"
+    filepath = f"static/{filename}"
+    if not os.path.exists("static"):
+        os.makedirs("static")
+    with open(filepath, "wb") as f:
+        f.write(response.content)
+
+    return Response(f"""
+    <Response>
+        <Play>https://{request.host}/static/{filename}</Play>
+    </Response>
+    """, mimetype="application/xml")
+
+@app.route("/", methods=["GET"])
+def root():
+    return "Nick AI Voice Agent is running."
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    print(f"🚀 Starting server on port {port}", flush=True)
+    app.run(host="0.0.0.0", port=port)
+
        
 
 
