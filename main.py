@@ -88,7 +88,7 @@ def voice():
     chat_completion = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Your goal is to sound friendly and helpful. Ask the caller for their ZIP code so you can check your calendar and book a free estimate nearby."},
+            {"role": "system", "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Your goal is to book customers for an estimate and schedule estimates in close proximity to eachother based off the zip code the customer gives you on the phone. Cross reference that with the scheduled bookings on my google calendar. Ask the caller for their ZIP code so you can check your calendar and book a free estimate nearby."},
             {"role": "user", "content": response_text}
         ]
     )
