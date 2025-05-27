@@ -117,11 +117,11 @@ def voice():
 
     if not history:
         if direction == "inbound":
-            intro_msg = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. How can I help you?"
+            intro_msg = "Hey, this is Nick with AhCHOO Indoor Air Quality Specialists. How can I help you?"
         elif direction == "outbound-api":
-            intro_msg = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
+            intro_msg = "Hey, this is Nick with AhCHOO Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
         else:
-            intro_msg = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
+            intro_msg = "Hi, this is Nick from AhCHOO Indoor Air Quality Specialists. How can I help you?"
 
         history.append({"role": "assistant", "content": intro_msg})
         save_conversation(sid, history)
@@ -166,7 +166,7 @@ def voice():
 
     system_msg = {
         "role": "system",
-        "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
+        "content": "You are Nick from Ah-CHOO Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
     }
     if not any(m.get("role") == "system" for m in history):
         history.insert(0, system_msg)
