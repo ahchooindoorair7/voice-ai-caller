@@ -62,12 +62,12 @@ def voice():
     user_input = request.form.get("SpeechResult", "").strip()
     print(f"🗣️ Transcribed: {user_input}", flush=True)
 
-    if not user_input:
+    # Exit condition
+    if "goodbye" in user_input.lower():
         return Response("""
         <Response>
-            <Gather input="speech" timeout="3">
-                <Say>Hi! This is Nick from AH-CHOO Indoor Air Quality. Could you tell me your ZIP code so I can check our calendar for a free estimate?</Say>
-            </Gather>
+            <Say>Okay, goodbye! Thanks for calling AH-CHOO.</Say>
+            <Hangup/>
         </Response>
         """, mimetype="application/xml")
 
@@ -99,12 +99,13 @@ def voice():
     chat_completion = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Your goal is to sound friendly and helpful. Ask the caller for their ZIP code so you can check your calendar and book a free estimate nearby."},
-            {"role": "user", "content": response_text}
+            {"role": "system", "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. You speak clearly and warmly. Help callers book free estimates by asking for their ZIP code and offering nearby times from your calendar. Keep it conversational. End the call if they say goodbye."},
+            {"role": "user", "content": user_input or "start"}
         ]
     )
     reply = chat_completion.choices[0].message.content.strip()
 
+    # Generate voice file
     response = requests.post(
         f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
         headers={
@@ -139,6 +140,7 @@ def voice():
     return Response(f"""
     <Response>
         <Play>https://{request.host}/static/{filename}</Play>
+        <Gather input="speech" action="/voice" method="POST" timeout="5" />
     </Response>
     """, mimetype="application/xml")
 
