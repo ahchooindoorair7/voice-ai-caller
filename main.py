@@ -111,12 +111,14 @@ def voice():
         }
     )
 
-    if response.status_code != 200:
-        return Response("""
-        <Response>
-            <Say>Sorry, something went wrong. We'll call you back shortly.</Say>
-        </Response>
-        """, mimetype="application/xml")
+   if response.status_code != 200:
+    print("❌ ElevenLabs error:", response.status_code, response.text, flush=True)
+    return Response("""
+    <Response>
+        <Say>Sorry, something went wrong. We'll call you back shortly.</Say>
+    </Response>
+    """, mimetype="application/xml")
+
 
     filename = f"{uuid.uuid4()}.mp3"
     filepath = f"static/{filename}"
