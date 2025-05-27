@@ -66,10 +66,11 @@ def load_credentials():
 
 def load_conversation(sid):
     if not os.path.exists(CONVO_PATH):
-        return {}
+        return []
     with open(CONVO_PATH, 'r') as f:
         data = json.load(f)
-    return data.get(sid, [])
+    convo = data.get(sid, [])
+    return convo if isinstance(convo, list) else []
 
 def save_conversation(sid, history):
     if not os.path.exists(CONVO_PATH):
@@ -102,6 +103,17 @@ def voice():
 
     history = load_conversation(sid)
 
+    if not isinstance(history, list):
+        history = []
+
+    system_msg = {
+        "role": "system",
+        "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. You speak in a friendly and professional tone. Your job is to schedule free in-home estimates. Use ZIP codes to check availability. Always remember the user's past answers. End the call if they say goodbye."
+    }
+
+    if not any(m.get("role") == "system" for m in history):
+        history.insert(0, system_msg)
+
     user_zip = extract_zip_or_city(user_input)
     calendar_reply = ""
 
@@ -121,19 +133,9 @@ def voice():
             print("❌ Calendar error:", e)
             calendar_reply = "Sorry, I couldn't check our calendar. But I can still help you schedule something."
 
-    system_msg = {
-        "role": "system",
-        "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. You speak in a friendly and professional tone. Your job is to schedule free in-home estimates. Use ZIP codes to check availability. Always remember the user's past answers. End the call if they say goodbye."
-    }
-
-    if not history:
-        history.append(system_msg)
-
+    history.append({"role": "user", "content": user_input})
     if calendar_reply:
-        history.append({"role": "user", "content": user_input})
         history.append({"role": "assistant", "content": calendar_reply})
-    else:
-        history.append({"role": "user", "content": user_input})
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
     chat_completion = client.chat.completions.create(
@@ -183,6 +185,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}", flush=True)
     app.run(host="0.0.0.0", port=port)
+
 
 
        
