@@ -10,6 +10,7 @@ from flask import Flask, request, Response
 from flask_session import Session
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
@@ -121,7 +122,7 @@ def voice():
             try:
                 creds = load_credentials()
                 if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(requests.Request())
+                    creds.refresh(Request())
                     print("🔁 Google credentials refreshed.", flush=True)
                 service = build('calendar', 'v3', credentials=creds)
                 now = datetime.datetime.utcnow().isoformat() + 'Z'
@@ -187,7 +188,7 @@ def voice():
 
 @app.route("/", methods=["GET"])
 def root():
-    return "Nick AI Voice Agent is running with memory and debugging."
+    return "Nick AI Voice Agent is running with calendar + memory + debug logging."
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
