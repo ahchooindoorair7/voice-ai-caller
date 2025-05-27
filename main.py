@@ -135,7 +135,10 @@ def voice():
             json={
                 "text": intro_msg,
                 "model_id": "eleven_multilingual_v2",
-                "voice_settings": {"stability": 0.4, "similarity_boost": 1.0}
+                "voice_settings": {
+                    "stability": 0.85,
+                    "similarity_boost": 1.0
+                }
             }
         )
 
@@ -214,7 +217,10 @@ def voice():
         json={
             "text": reply,
             "model_id": "eleven_multilingual_v2",
-            "voice_settings": {"stability": 0.4, "similarity_boost": 1.0}
+            "voice_settings": {
+                "stability": 0.85,
+                "similarity_boost": 1.0
+            }
         }
     )
 
@@ -244,6 +250,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}", flush=True)
     app.run(host="0.0.0.0", port=port)
+
 
 
 
