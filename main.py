@@ -104,6 +104,7 @@ def oauth2callback():
         'client_secret': credentials.client_secret,
         'scopes': credentials.scopes
     }
+    print("✔️ COPY THIS TOKEN:", session['credentials'], flush=True)
     return "✅ Authorization complete! Your AI can now read your calendar."
 
 @app.route("/events")
@@ -134,8 +135,7 @@ def root():
 @app.route("/voice", methods=["POST"])
 def voice():
     print("🟢 Twilio POST /voice received", flush=True)
-    # Placeholder for real user input from speech-to-text
-    user_input = "I'm in Sugar Land"
+    user_input = "I'm in Sugar Land"  # Replace with real transcribed input from caller
     user_zip = extract_zip_or_city(user_input)
     if not user_zip:
         response_text = "Sorry, I didn’t catch your location. Could you please tell me your ZIP code or city name?"
@@ -157,7 +157,6 @@ def voice():
         matches = get_calendar_zip_matches(user_zip, events)
         response_text = build_zip_prompt(user_zip, matches)
 
-    # Send the smart response to GPT-4o for voice tone
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
     chat_completion = client.chat.completions.create(
         model="gpt-4o",
@@ -168,7 +167,6 @@ def voice():
     )
     reply = chat_completion.choices[0].message.content.strip()
 
-    # Use ElevenLabs to generate voice
     response = requests.post(
         f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
         headers={
