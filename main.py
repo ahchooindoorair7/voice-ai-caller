@@ -147,17 +147,27 @@ def oauth2callback():
 
 @app.route("/voice", methods=["POST"])
 def voice():
-        direction = request.form.get("Direction", "").lower()
+    direction = request.form.get("Direction", "").lower()
     print(f"🔄 Call Direction: {direction}", flush=True)
+
+    sid = request.form.get("CallSid", str(uuid.uuid4()))
+    history = load_conversation(sid)
+    if not isinstance(history, list):
+        history = []
 
     if not history:  # Only prepend initial greeting once
         if direction == "inbound":
             intro_msg = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. How can I help you?"
         elif direction == "outbound-api":
-            intro_msg = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. You submitted an action form looking to get some informaion on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
+            intro_msg = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
         else:
             intro_msg = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
         history.append({"role": "assistant", "content": intro_msg})
+
+    try:
+        user_input = request.form.get("SpeechResult", "").strip()
+        print(f"🗣️ [{sid}] Transcribed: {user_input}", flush=True)
+
     try:
         user_input = request.form.get("SpeechResult", "").strip()
         sid = request.form.get("CallSid", str(uuid.uuid4()))
