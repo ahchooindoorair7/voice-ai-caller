@@ -148,14 +148,18 @@ def synthesize_speech(text):
 @app.route("/test-openai", methods=["GET"])
 def test_openai():
     try:
-        openai.api_key = OPENAI_API_KEY
-        response = openai.ChatCompletion.create(
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "Say hello!"}
             ]
         )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"❌ OpenAI API test failed: {e}"
+
         return response.choices[0].message["content"]
     except Exception as e:
         return f"❌ Failed to call OpenAI API: {str(e)}"
