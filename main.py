@@ -128,7 +128,7 @@ def synthesize_speech(text):
         },
         json={
             "text": text,
-  "model_id": "eleven_multilingual_v2",
+            "model_id": "eleven_multilingual_v2",
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.75,
@@ -216,11 +216,11 @@ def response():
             history.append({"role": "assistant", "content": calendar_prompt})
 
         openai.api_key = OPENAI_API_KEY
-response = openai.ChatCompletion.create(
-    model="gpt-4o",
-    messages=history,
-    stream=True
-)
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=history,
+            stream=True
+        )
         for chunk in response:
             delta = chunk.choices[0].delta.content
             if delta:
