@@ -100,18 +100,6 @@ def save_conversation(sid, history):
 def clear_conversation(sid):
     redis_client.delete(sid)
 
-def smart_model_response(history):
-    model = "gpt-3.5-turbo"
-    total_tokens = sum(len(entry.get("content", "")) for entry in history)
-    if total_tokens > 3000:
-        model = "gpt-4o"
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    return client.chat.completions.create(
-        model=model,
-        messages=history,
-        stream=True
-    )
-
 @app.route("/voice", methods=["POST"])
 def voice():
     direction = request.form.get("Direction", "").lower()
@@ -142,7 +130,11 @@ def voice():
 
     gpt_reply = ""
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_gpt = executor.submit(lambda: smart_model_response(history))
+        future_gpt = executor.submit(lambda: openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
+            model="gpt-4o",
+            messages=history,
+            stream=True
+        ))
 
         calendar_prompt = ""
         if user_zip:
@@ -213,7 +205,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)
-
 
 
 
