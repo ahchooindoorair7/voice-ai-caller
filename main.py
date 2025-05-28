@@ -215,11 +215,12 @@ def response():
             calendar_prompt = build_zip_prompt(user_zip, matches)
             history.append({"role": "assistant", "content": calendar_prompt})
 
-        response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
-            model="gpt-4o",
-            messages=history,
-            stream=True
-        )
+        openai.api_key = OPENAI_API_KEY
+response = openai.ChatCompletion.create(
+    model="gpt-4o",
+    messages=history,
+    stream=True
+)
         for chunk in response:
             delta = chunk.choices[0].delta.content
             if delta:
