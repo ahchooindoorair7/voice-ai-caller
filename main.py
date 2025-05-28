@@ -40,22 +40,6 @@ city_to_zip = {
 
 redis_client = redis.from_url(REDIS_URL)
 
-PRELOADED_THINKING_MESSAGES = []
-PRELOADED_ZIP_THINKING_MESSAGES = []
-
-# Load pre-generated ElevenLabs thinking MP3s from static folders
-PRELOADED_THINKING_MESSAGES_FOLDER = "static/thinking"
-PRELOADED_ZIP_THINKING_MESSAGES_FOLDER = "static/thinking_zip"
-
-if os.path.exists(PRELOADED_THINKING_MESSAGES_FOLDER):
-    for f in os.listdir(PRELOADED_THINKING_MESSAGES_FOLDER):
-        if f.endswith(".mp3"):
-            PRELOADED_THINKING_MESSAGES.append(f"static/thinking/{f}")
-
-if os.path.exists(PRELOADED_ZIP_THINKING_MESSAGES_FOLDER):
-    for f in os.listdir(PRELOADED_ZIP_THINKING_MESSAGES_FOLDER):
-        if f.endswith(".mp3"):
-            PRELOADED_ZIP_THINKING_MESSAGES.append(f"static/thinking_zip/{f}")
 
 def clean_static_folder():
     folder = 'static'
@@ -63,12 +47,14 @@ def clean_static_folder():
         for filename in os.listdir(folder):
             filepath = os.path.join(folder, filename)
             try:
-                if os.path.isfile(filepath) and not filepath.startswith("static/thinking") and not filepath.startswith("static/thinking_zip"):
+                if os.path.isfile(filepath):
                     os.remove(filepath)
             except Exception as e:
                 print(f"Error deleting file {filename}: {e}")
 
+
 clean_static_folder()
+
 
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
@@ -78,6 +64,7 @@ def extract_zip_or_city(text):
         if city in text.lower():
             return city_to_zip[city]
     return None
+
 
 def get_calendar_zip_matches(user_zip, events):
     matches = []
@@ -89,11 +76,13 @@ def get_calendar_zip_matches(user_zip, events):
             matches.append(start)
     return matches
 
+
 def build_zip_prompt(user_zip, matches):
     if matches:
         return f"We’ll already be in your area ({user_zip}) at {', '.join(matches[:2])}. Would one of those work for a free estimate?"
     else:
         return f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day works best?"
+
 
 def load_credentials():
     token_json = os.environ.get("GOOGLE_TOKEN")
@@ -107,17 +96,21 @@ def load_credentials():
         print("❌ Failed to load credentials from GOOGLE_TOKEN:", e)
         return None
 
+
 def load_conversation(sid):
     data = redis_client.get(sid)
     return json.loads(data) if data else []
+
 
 def save_conversation(sid, history):
     if len(history) > 7:
         history = history[:1] + history[-6:]
     redis_client.set(sid, json.dumps(history), ex=3600)
 
+
 def clear_conversation(sid):
     redis_client.delete(sid)
+
 
 def synthesize_speech(text):
     tts = requests.post(
@@ -128,11 +121,10 @@ def synthesize_speech(text):
         },
         json={
             "text": text,
-            "model_id": "eleven_multilingual_v2",
+            "model_id": "eleven_monolingual_v1",
             "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.75,
-                "style": 0.4
+                "stability": 0.50,
+                "similarity_boost": 0.75
             }
         }
     )
@@ -141,9 +133,12 @@ def synthesize_speech(text):
         return None
     filename = f"{uuid.uuid4()}.mp3"
     filepath = f"static/{filename}"
+    if not os.path.exists("static"):
+        os.makedirs("static")
     with open(filepath, "wb") as f:
         f.write(tts.content)
     return filepath
+
 
 @app.route("/voice", methods=["POST"])
 def voice():
@@ -176,12 +171,22 @@ def voice():
     redis_client.set(f"history:{sid}", json.dumps(history), ex=3600)
     redis_client.set(f"zip:{sid}", user_zip or "", ex=3600)
 
-    if user_zip and PRELOADED_ZIP_THINKING_MESSAGES:
-        thinking_path = random.choice(PRELOADED_ZIP_THINKING_MESSAGES)
-    elif PRELOADED_THINKING_MESSAGES:
-        thinking_path = random.choice(PRELOADED_THINKING_MESSAGES)
-    else:
-        thinking_path = None
+    generic_thinking_lines = [
+        "Alright, let me go ahead and check that out for you real quick.",
+        "Give me just a moment while I look into that for you.",
+        "Let me take a look real quick and see what I can find.",
+        "Okay, hang tight — I’m just checking a few things.",
+        "One second — I’m pulling up the details now."
+    ]
+    zip_thinking_lines = [
+        "Okay, let me check your ZIP code and see when we’ll be in that area.",
+        "Just a moment — I’m checking the schedule for your neighborhood.",
+        "Great, let me see when we’ll next be near your location.",
+        "Let me take a second to look at the calendar and find availability near you."
+    ]
+    thinking_lines = zip_thinking_lines if user_zip else generic_thinking_lines
+    thinking_text = random.choice(thinking_lines)
+    thinking_path = synthesize_speech(thinking_text)
 
     if not thinking_path:
         return Response("<Response><Say>One moment while I check on that.</Say><Redirect>/response</Redirect></Response>", mimetype="application/xml")
@@ -192,6 +197,7 @@ def voice():
         <Redirect>/response?sid={sid}</Redirect>
     </Response>
     """, mimetype="application/xml")
+
 
 @app.route("/response", methods=["POST", "GET"])
 def response():
@@ -215,8 +221,7 @@ def response():
             calendar_prompt = build_zip_prompt(user_zip, matches)
             history.append({"role": "assistant", "content": calendar_prompt})
 
-        openai.api_key = OPENAI_API_KEY
-        response = openai.ChatCompletion.create(
+        response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
             model="gpt-4o",
             messages=history,
             stream=True
@@ -240,9 +245,10 @@ def response():
     return Response(f"""
     <Response>
         <Play>https://{request.host}/{reply_path}</Play>
-        <Gather input="speech" action="/voice" method="POST" timeout="5" />
+        <Gather input=\"speech\" action=\"/voice\" method=\"POST\" timeout=\"5\" />
     </Response>
     """, mimetype="application/xml")
+
 
 @app.route("/", methods=["GET"])
 def root():
