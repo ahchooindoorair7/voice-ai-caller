@@ -145,6 +145,21 @@ def synthesize_speech(text):
         f.write(tts.content)
     return filepath
 
+@app.route("/test-openai", methods=["GET"])
+def test_openai():
+    try:
+        openai.api_key = OPENAI_API_KEY
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Say hello!"}
+            ]
+        )
+        return response.choices[0].message["content"]
+    except Exception as e:
+        return f"❌ Failed to call OpenAI API: {str(e)}"
+
 @app.route("/voice", methods=["POST"])
 def voice():
     direction = request.form.get("Direction", "").lower()
