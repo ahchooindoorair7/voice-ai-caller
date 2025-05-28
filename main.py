@@ -7,6 +7,7 @@ import openai
 import re
 import redis
 import shutil
+import concurrent.futures
 
 from flask import Flask, request, Response, redirect
 from flask_session import Session
@@ -37,7 +38,6 @@ city_to_zip = {
 
 redis_client = redis.from_url(REDIS_URL)
 
-# Cleanup old static files
 def clean_static_folder():
     folder = 'static'
     if os.path.exists(folder):
@@ -51,7 +51,6 @@ def clean_static_folder():
 
 clean_static_folder()
 
-# Extract zip from user message
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
     if zip_match:
@@ -94,58 +93,12 @@ def load_conversation(sid):
     return json.loads(data) if data else []
 
 def save_conversation(sid, history):
-    # Trim history to last 6 messages for speed
     if len(history) > 7:
-        history = history[:1] + history[-6:]  # keep system + last 6 messages
+        history = history[:1] + history[-6:]
     redis_client.set(sid, json.dumps(history), ex=3600)
 
 def clear_conversation(sid):
     redis_client.delete(sid)
-
-@app.route("/authorize")
-def authorize():
-    flow = Flow.from_client_config(
-        {
-            "installed": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token"
-            }
-        },
-        scopes=SCOPES,
-        redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
-    )
-    auth_url, state = flow.authorization_url(
-        access_type='offline',
-        prompt='consent',
-        include_granted_scopes='true'
-    )
-    return redirect(auth_url)
-
-@app.route("/oauth2callback")
-def oauth2callback():
-    try:
-        flow = Flow.from_client_config(
-            {
-                "installed": {
-                    "client_id": GOOGLE_CLIENT_ID,
-                    "client_secret": GOOGLE_CLIENT_SECRET,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token"
-                }
-            },
-            scopes=SCOPES,
-            redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
-        )
-        flow.fetch_token(authorization_response=request.url)
-        token_data = flow.credentials.to_json()
-        print("\n\n🔐 COPY THIS TOKEN ↓↓↓\n")
-        print(token_data)
-        print("\n🔐 Paste this token into your Render Environment as: GOOGLE_TOKEN\n")
-        return "✅ Token printed to Render Logs. Go copy it now."
-    except Exception as e:
-        return f"❌ Failed to authorize: {e}"
 
 @app.route("/voice", methods=["POST"])
 def voice():
@@ -175,38 +128,39 @@ def voice():
     history.append({"role": "user", "content": user_input})
     user_zip = extract_zip_or_city(user_input)
 
-    if user_zip:
-        try:
-            creds = load_credentials()
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            service = build('calendar', 'v3', credentials=creds)
-            now = datetime.datetime.utcnow().isoformat() + 'Z'
-            events = service.events().list(calendarId='primary', timeMin=now,
-                                           maxResults=10, singleEvents=True,
-                                           orderBy='startTime').execute().get('items', [])
-            matches = get_calendar_zip_matches(user_zip, events)
-            reply = build_zip_prompt(user_zip, matches)
-        except Exception as e:
-            print("❌ Calendar access error:", e)
-            reply = "Sorry, I couldn't check our calendar. But I can still help you schedule something."
-        history.append({"role": "assistant", "content": reply})
+    gpt_reply = ""
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_gpt = executor.submit(lambda: openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
+            model="gpt-4o",
+            messages=history,
+            stream=True
+        ))
 
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=history,
-        stream=True
-    )
+        calendar_prompt = ""
+        if user_zip:
+            try:
+                creds = load_credentials()
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                service = build('calendar', 'v3', credentials=creds)
+                now = datetime.datetime.utcnow().isoformat() + 'Z'
+                events = service.events().list(calendarId='primary', timeMin=now,
+                                               maxResults=10, singleEvents=True,
+                                               orderBy='startTime').execute().get('items', [])
+                matches = get_calendar_zip_matches(user_zip, events)
+                calendar_prompt = build_zip_prompt(user_zip, matches)
+                history.append({"role": "assistant", "content": calendar_prompt})
+            except Exception as e:
+                print("❌ Calendar access error:", e)
 
-    full_reply = ""
-    for chunk in response:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            full_reply += delta
+        response = future_gpt.result()
+        for chunk in response:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                gpt_reply += delta
 
-    print(f"🤖 GPT reply: {full_reply}")
-    history.append({"role": "assistant", "content": full_reply})
+    print(f"🤖 GPT reply: {gpt_reply}")
+    history.append({"role": "assistant", "content": gpt_reply})
     save_conversation(sid, history)
 
     tts = requests.post(
@@ -216,8 +170,8 @@ def voice():
             "Content-Type": "application/json"
         },
         json={
-            "text": full_reply,
-            "model_id": "eleven_multilingual_v2",
+            "text": gpt_reply,
+            "model_id": "eleven_monolingual_v1",
             "voice_settings": {
                 "stability": 0.50,
                 "similarity_boost": 0.75
