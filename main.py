@@ -6,7 +6,7 @@ import requests
 import openai
 import re
 import redis
-from flask import Flask, request, Response, send_from_directory, redirect  # FIXED: no backslash or underscore
+from flask import Flask, request, Response, send_from_directory, redirect
 from flask_session import Session
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -213,10 +213,11 @@ def response_route():
         return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
 
     play_url = f"https://{request.host}/static/{reply_filename}"
+    # ----- MAIN FIX: add sid to /voice action below -----
     return Response(f"""
     <Response>
         <Play>{play_url}</Play>
-        <Gather input="speech" action="/voice" method="POST" timeout="5" />
+        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" />
     </Response>
     """, mimetype="application/xml")
 
