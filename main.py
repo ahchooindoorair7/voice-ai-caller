@@ -6,6 +6,7 @@ import requests
 import openai
 import re
 import redis
+import shutil
 
 from flask import Flask, request, Response, redirect
 from flask_session import Session
@@ -36,6 +37,21 @@ city_to_zip = {
 
 redis_client = redis.from_url(REDIS_URL)
 
+# Cleanup old static files
+def clean_static_folder():
+    folder = 'static'
+    if os.path.exists(folder):
+        for filename in os.listdir(folder):
+            filepath = os.path.join(folder, filename)
+            try:
+                if os.path.isfile(filepath):
+                    os.remove(filepath)
+            except Exception as e:
+                print(f"Error deleting file {filename}: {e}")
+
+clean_static_folder()
+
+# Extract zip from user message
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
     if zip_match:
@@ -78,6 +94,9 @@ def load_conversation(sid):
     return json.loads(data) if data else []
 
 def save_conversation(sid, history):
+    # Trim history to last 6 messages for speed
+    if len(history) > 7:
+        history = history[:1] + history[-6:]  # keep system + last 6 messages
     redis_client.set(sid, json.dumps(history), ex=3600)
 
 def clear_conversation(sid):
@@ -131,10 +150,8 @@ def oauth2callback():
 @app.route("/voice", methods=["POST"])
 def voice():
     direction = request.form.get("Direction", "").lower()
-    print(f"🔄 Call Direction: {direction}", flush=True)
     sid = request.form.get("CallSid", str(uuid.uuid4()))
     user_input = request.form.get("SpeechResult", "").strip()
-    print(f"🗣️ [{sid}] Transcribed: {user_input}", flush=True)
 
     if "goodbye" in user_input.lower():
         clear_conversation(sid)
@@ -157,14 +174,12 @@ def voice():
 
     history.append({"role": "user", "content": user_input})
     user_zip = extract_zip_or_city(user_input)
-    print(f"📍 ZIP extracted: {user_zip}", flush=True)
 
     if user_zip:
         try:
             creds = load_credentials()
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
-                print("🔁 Credentials refreshed")
             service = build('calendar', 'v3', credentials=creds)
             now = datetime.datetime.utcnow().isoformat() + 'Z'
             events = service.events().list(calendarId='primary', timeMin=now,
@@ -180,11 +195,18 @@ def voice():
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=history
+        messages=history,
+        stream=True
     )
-    reply = response.choices[0].message.content.strip()
-    print(f"🤖 GPT reply: {reply}", flush=True)
-    history.append({"role": "assistant", "content": reply})
+
+    full_reply = ""
+    for chunk in response:
+        delta = chunk.choices[0].delta.content
+        if delta:
+            full_reply += delta
+
+    print(f"🤖 GPT reply: {full_reply}")
+    history.append({"role": "assistant", "content": full_reply})
     save_conversation(sid, history)
 
     tts = requests.post(
@@ -194,7 +216,7 @@ def voice():
             "Content-Type": "application/json"
         },
         json={
-            "text": reply,
+            "text": full_reply,
             "model_id": "eleven_multilingual_v2",
             "voice_settings": {
                 "stability": 0.50,
@@ -227,8 +249,9 @@ def root():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    print(f"🚀 Starting server on port {port}", flush=True)
+    print(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)
+
 
 
 
