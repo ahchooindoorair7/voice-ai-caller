@@ -189,9 +189,12 @@ def response():
             stream=True
         )
         for chunk in response:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                gpt_reply += delta
+            if hasattr(chunk.choices[0].delta, "content"):
+                gpt_reply += chunk.choices[0].delta.content or ""
+
+        if not gpt_reply.strip():
+            gpt_reply = "Sorry, there was an issue with my response. Can you try again?"
+
     except Exception as e:
         print("❌ GPT generation error:", e)
         return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
@@ -208,16 +211,6 @@ def response():
     <Response>
         <Play>https://{request.host}/{reply_path}</Play>
         <Gather input=\"speech\" action=\"/voice\" method=\"POST\" timeout=\"5\" />
-    </Response>
-    """, mimetype="application/xml")
-
-    if not thinking_path:
-        return Response("<Response><Say>One moment while I check on that.</Say><Redirect>/response</Redirect></Response>", mimetype="application/xml")
-
-    return Response(f"""
-    <Response>
-        <Play>https://{request.host}/{thinking_path}</Play>
-        <Redirect>/response?sid={sid}</Redirect>
     </Response>
     """, mimetype="application/xml")
 
