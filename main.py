@@ -6,16 +6,10 @@ import requests
 import openai
 import re
 import redis
-import shutil
-import random
-import threading
-import concurrent.futures
-
-from flask import Flask, request, Response, redirect
+from flask import Flask, request, Response, send_from_directory
 from flask_session import Session
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 
 app = Flask(__name__)
@@ -27,8 +21,6 @@ os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID")
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN")
 REDIS_URL = os.environ.get("REDIS_URL")
 
@@ -43,7 +35,6 @@ redis_client = redis.from_url(REDIS_URL)
 PRELOADED_THINKING_MESSAGES = []
 PRELOADED_ZIP_THINKING_MESSAGES = []
 
-# Load pre-generated ElevenLabs thinking MP3s from static folders
 PRELOADED_THINKING_MESSAGES_FOLDER = "static/thinking"
 PRELOADED_ZIP_THINKING_MESSAGES_FOLDER = "static/thinking_zip"
 
@@ -63,7 +54,10 @@ def clean_static_folder():
         for filename in os.listdir(folder):
             filepath = os.path.join(folder, filename)
             try:
-                if os.path.isfile(filepath) and not filepath.startswith("static/thinking") and not filepath.startswith("static/thinking_zip"):
+                if os.path.isfile(filepath) and not (
+                    filepath.startswith(os.path.join(folder, "thinking")) or
+                    filepath.startswith(os.path.join(folder, "thinking_zip"))
+                ):
                     os.remove(filepath)
             except Exception as e:
                 print(f"Error deleting file {filename}: {e}")
@@ -108,16 +102,19 @@ def load_credentials():
         return None
 
 def load_conversation(sid):
-    data = redis_client.get(sid)
-    return json.loads(data) if data else []
+    key = f"history:{sid}"
+    data = redis_client.get(key)
+    return json.loads(data.decode()) if data else []
 
 def save_conversation(sid, history):
+    key = f"history:{sid}"
     if len(history) > 7:
         history = history[:1] + history[-6:]
-    redis_client.set(sid, json.dumps(history), ex=3600)
+    redis_client.set(key, json.dumps(history), ex=3600)
 
 def clear_conversation(sid):
-    redis_client.delete(sid)
+    key = f"history:{sid}"
+    redis_client.delete(key)
 
 def synthesize_speech(text):
     tts = requests.post(
@@ -128,7 +125,7 @@ def synthesize_speech(text):
         },
         json={
             "text": text,
-            "model_id": "eleven_multilingual_v2",
+            "model_id": "eleven_multilingual_v2",  # Change to 'eleven_multilingual_v2' or 'eleven_monolingual_v1' or Flash v2.5 if you have access
             "voice_settings": {
                 "stability": 0.5,
                 "similarity_boost": 0.75,
@@ -143,7 +140,7 @@ def synthesize_speech(text):
     filepath = f"static/{filename}"
     with open(filepath, "wb") as f:
         f.write(tts.content)
-    return filepath
+    return filename  # just the filename
 
 @app.route("/test-openai", methods=["GET"])
 def test_openai():
@@ -160,15 +157,23 @@ def test_openai():
     except Exception as e:
         return f"❌ OpenAI API test failed: {e}"
 
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory('static', filename)
+
 @app.route("/response", methods=["POST", "GET"])
-def response():
+def response_route():
     sid = request.values.get("sid")
-    history = json.loads(redis_client.get(f"history:{sid}") or b"[]")
+    if not sid:
+        return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
+
+    history = load_conversation(sid)
     user_zip = redis_client.get(f"zip:{sid}")
     user_zip = user_zip.decode() if user_zip else None
 
     gpt_reply = ""
     try:
+        # Calendar prompt if zip available
         if user_zip:
             creds = load_credentials()
             if creds and creds.expired and creds.refresh_token:
@@ -203,16 +208,37 @@ def response():
     history.append({"role": "assistant", "content": gpt_reply})
     save_conversation(sid, history)
 
-    reply_path = synthesize_speech(gpt_reply)
-    if not reply_path:
+    reply_filename = synthesize_speech(gpt_reply)
+    if not reply_filename:
         return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
 
+    play_url = f"https://{request.host}/static/{reply_filename}"
     return Response(f"""
     <Response>
-        <Play>https://{request.host}/{reply_path}</Play>
-        <Gather input=\"speech\" action=\"/voice\" method=\"POST\" timeout=\"5\" />
+        <Play>{play_url}</Play>
+        <Gather input="speech" action="/voice" method="POST" timeout="5" />
     </Response>
     """, mimetype="application/xml")
+
+@app.route("/voice", methods=["POST"])
+def voice_route():
+    # This endpoint should handle incoming speech from Twilio's <Gather>
+    sid = request.values.get("sid")
+    user_input = request.values.get("SpeechResult", "")
+    print(f"Received voice input: {user_input}")
+
+    # Save/append the user's input to conversation history
+    history = load_conversation(sid)
+    if user_input:
+        history.append({"role": "user", "content": user_input})
+        # Optionally, extract ZIP code and cache it
+        zip_found = extract_zip_or_city(user_input)
+        if zip_found:
+            redis_client.set(f"zip:{sid}", zip_found, ex=900)
+    save_conversation(sid, history)
+
+    # Redirect back to /response to continue the dialogue loop
+    return redirect(f"/response?sid={sid}")
 
 @app.route("/", methods=["GET"])
 def root():
