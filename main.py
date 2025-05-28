@@ -161,9 +161,27 @@ def test_openai():
 def static_files(filename):
     return send_from_directory('static', filename)
 
+# ========== CUSTOM GREETING ON INBOUND CALL ========== #
+@app.route("/voice-greeting", methods=["POST", "GET"])
+def voice_greeting():
+    """
+    Entry point for inbound calls: Plays a user-provided greeting MP3, then hands off to /response to start AI.
+    """
+    sid = request.values.get("CallSid") or request.values.get("sid") or request.args.get("sid") or str(uuid.uuid4())
+    # The user's MP3 has been uploaded as:
+    greeting_filename = "ElevenLabs_2025-05-28T06_07_15_Nick's Clone_pvc_sp100_s50_sb75_se40_b_m2.mp3"
+    greeting_url = f"https://{request.host}/static/{greeting_filename}"
+    return Response(f"""
+    <Response>
+        <Play>{greeting_url}</Play>
+        <Redirect method=\"POST\">/response?sid={sid}</Redirect>
+    </Response>
+    """, mimetype="application/xml")
+# ========== END CUSTOM GREETING ========== #
+
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
-    sid = request.values.get("sid")
+    sid = request.values.get("sid") or request.args.get("sid")
     if not sid:
         return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
 
@@ -213,7 +231,6 @@ def response_route():
         return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
 
     play_url = f"https://{request.host}/static/{reply_filename}"
-    # ----- MAIN FIX: add sid to /voice action below -----
     return Response(f"""
     <Response>
         <Play>{play_url}</Play>
@@ -223,8 +240,7 @@ def response_route():
 
 @app.route("/voice", methods=["POST"])
 def voice_route():
-    # This endpoint should handle incoming speech from Twilio's <Gather>
-    sid = request.values.get("sid")
+    sid = request.values.get("sid") or request.args.get("sid")
     user_input = request.values.get("SpeechResult", "")
     print(f"Received voice input: {user_input}")
 
@@ -249,3 +265,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)
+
