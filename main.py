@@ -168,6 +168,9 @@ def voice():
     history.append({"role": "user", "content": user_input})
     user_zip = extract_zip_or_city(user_input)
 
+    redis_client.set(f"history:{sid}", json.dumps(history), ex=3600)
+    redis_client.set(f"zip:{sid}", user_zip or "", ex=3600)
+
     generic_thinking_lines = [
         "Alright, let me go ahead and check that out for you real quick.",
         "Give me just a moment while I look into that for you.",
@@ -186,41 +189,50 @@ def voice():
     thinking_path = synthesize_speech(thinking_text)
 
     if not thinking_path:
-        return Response("<Response><Say>One moment while I check on that.</Say></Response>", mimetype="application/xml")
+        return Response("<Response><Say>One moment while I check on that.</Say><Redirect>/response</Redirect></Response>", mimetype="application/xml")
 
-    # Start GPT generation in a thread
+    return Response(f"""
+    <Response>
+        <Play>https://{request.host}/{thinking_path}</Play>
+        <Redirect>/response?sid={sid}</Redirect>
+    </Response>
+    """, mimetype="application/xml")
+
+
+@app.route("/response", methods=["POST", "GET"])
+def response():
+    sid = request.values.get("sid")
+    history = json.loads(redis_client.get(f"history:{sid}") or b"[]")
+    user_zip = redis_client.get(f"zip:{sid}")
+    user_zip = user_zip.decode() if user_zip else None
+
     gpt_reply = ""
-    def generate_gpt():
-        nonlocal gpt_reply
-        try:
-            if user_zip:
-                creds = load_credentials()
-                if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                service = build('calendar', 'v3', credentials=creds)
-                now = datetime.datetime.utcnow().isoformat() + 'Z'
-                events = service.events().list(calendarId='primary', timeMin=now,
-                                               maxResults=10, singleEvents=True,
-                                               orderBy='startTime').execute().get('items', [])
-                matches = get_calendar_zip_matches(user_zip, events)
-                calendar_prompt = build_zip_prompt(user_zip, matches)
-                history.append({"role": "assistant", "content": calendar_prompt})
+    try:
+        if user_zip:
+            creds = load_credentials()
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            service = build('calendar', 'v3', credentials=creds)
+            now = datetime.datetime.utcnow().isoformat() + 'Z'
+            events = service.events().list(calendarId='primary', timeMin=now,
+                                           maxResults=10, singleEvents=True,
+                                           orderBy='startTime').execute().get('items', [])
+            matches = get_calendar_zip_matches(user_zip, events)
+            calendar_prompt = build_zip_prompt(user_zip, matches)
+            history.append({"role": "assistant", "content": calendar_prompt})
 
-            response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
-                model="gpt-4o",
-                messages=history,
-                stream=True
-            )
-            for chunk in response:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    gpt_reply += delta
-        except Exception as e:
-            print("❌ GPT generation error:", e)
-
-    thread = threading.Thread(target=generate_gpt)
-    thread.start()
-    thread.join()
+        response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
+            model="gpt-4o",
+            messages=history,
+            stream=True
+        )
+        for chunk in response:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                gpt_reply += delta
+    except Exception as e:
+        print("❌ GPT generation error:", e)
+        return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
 
     print(f"🤖 GPT reply: {gpt_reply}")
     history.append({"role": "assistant", "content": gpt_reply})
@@ -232,7 +244,6 @@ def voice():
 
     return Response(f"""
     <Response>
-        <Play>https://{request.host}/{thinking_path}</Play>
         <Play>https://{request.host}/{reply_path}</Play>
         <Gather input=\"speech\" action=\"/voice\" method=\"POST\" timeout=\"5\" />
     </Response>
