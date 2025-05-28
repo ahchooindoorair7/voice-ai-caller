@@ -4,56 +4,37 @@ import json
 import datetime
 import requests
 import openai
-import redis
 import re
+import redis
 
-from flask import Flask, request, Response
+from flask import Flask, request, Response, redirect
 from flask_session import Session
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
 from google.auth.transport.requests import Request
 
 app = Flask(__name__)
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
 
-# Environment setup
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID")
-GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-
-REDIS_HOST = os.environ.get("REDIS_HOST")
-REDIS_PORT = os.environ.get("REDIS_PORT")
-REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD")
-
-redis_client = redis.StrictRedis(
-    host=REDIS_HOST,
-    port=int(REDIS_PORT),
-    password=REDIS_PASSWORD,
-    decode_responses=True
-)
+GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN")
+REDIS_URL = os.environ.get("REDIS_URL")
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-
 city_to_zip = {
     "houston": "77002", "sugar land": "77479", "katy": "77494",
     "the woodlands": "77380", "cypress": "77429", "bellaire": "77401", "tomball": "77375"
 }
 
-FAQ_RESPONSES = {
-    "price": "So as you saw in the ad video we clean the full hvac system. Since that is the case, we do free in-home estimates so we can see exactly what needs to be done. Then we know what our time & materials will be, so we could give you a price. We don't like to play the whole add-on upcharge game. Whatever price we give you will stay there. Would you rather an afternoon, or night appointment? We do estimates until 9pm!",
-    "cost": "Most homes fall in the $399 to $799 range depending on size and number of systems.",
-    "what do you do": "We clean air ducts, sanitize HVAC systems, and improve your indoor air quality.",
-    "services": "We specialize in whole-home air duct cleaning and HVAC sanitation.",
-    "how long": "Most jobs take between 1.5 to 3 hours depending on your home's size.",
-    "schedule": "I’d be happy to help schedule your estimate! What's your ZIP code so I can check availability?",
-    "hours": "We typically schedule between 8 AM and 6 PM Monday through Saturday."
-}
+redis_client = redis.from_url(REDIS_URL)
 
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
@@ -80,28 +61,78 @@ def build_zip_prompt(user_zip, matches):
     else:
         return f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day works best?"
 
+def load_credentials():
+    token_json = os.environ.get("GOOGLE_TOKEN")
+    if not token_json:
+        print("❌ No GOOGLE_TOKEN environment variable found.")
+        return None
+    try:
+        data = json.loads(token_json)
+        return Credentials.from_authorized_user_info(data, SCOPES)
+    except Exception as e:
+        print("❌ Failed to load credentials from GOOGLE_TOKEN:", e)
+        return None
+
 def load_conversation(sid):
-    raw = redis_client.get(sid)
-    return json.loads(raw) if raw else []
+    data = redis_client.get(sid)
+    return json.loads(data) if data else []
 
 def save_conversation(sid, history):
-    redis_client.setex(sid, 3600, json.dumps(history))  # expires in 1 hour
+    redis_client.set(sid, json.dumps(history), ex=3600)
 
 def clear_conversation(sid):
     redis_client.delete(sid)
 
-def load_credentials():
+@app.route("/authorize")
+def authorize():
+    flow = Flow.from_client_config(
+        {
+            "installed": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token"
+            }
+        },
+        scopes=SCOPES,
+        redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
+    )
+    auth_url, state = flow.authorization_url(
+        access_type='offline',
+        prompt='consent',
+        include_granted_scopes='true'
+    )
+    return redirect(auth_url)
+
+@app.route("/oauth2callback")
+def oauth2callback():
     try:
-        data = json.loads(GOOGLE_TOKEN)
-        return Credentials.from_authorized_user_info(data, SCOPES)
+        flow = Flow.from_client_config(
+            {
+                "installed": {
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token"
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri="https://voice-ai-caller.onrender.com/oauth2callback"
+        )
+        flow.fetch_token(authorization_response=request.url)
+        token_data = flow.credentials.to_json()
+        print("\n\n🔐 COPY THIS TOKEN ↓↓↓\n")
+        print(token_data)
+        print("\n🔐 Paste this token into your Render Environment as: GOOGLE_TOKEN\n")
+        return "✅ Token printed to Render Logs. Go copy it now."
     except Exception as e:
-        print("❌ Failed to load Google credentials:", e)
-        return None
+        return f"❌ Failed to authorize: {e}"
 
 @app.route("/voice", methods=["POST"])
 def voice():
-    sid = request.form.get("CallSid", str(uuid.uuid4()))
     direction = request.form.get("Direction", "").lower()
+    print(f"🔄 Call Direction: {direction}", flush=True)
+    sid = request.form.get("CallSid", str(uuid.uuid4()))
     user_input = request.form.get("SpeechResult", "").strip()
     print(f"🗣️ [{sid}] Transcribed: {user_input}", flush=True)
 
@@ -110,54 +141,41 @@ def voice():
         return Response("<Response><Say>Okay, goodbye! Thanks for calling.</Say><Hangup/></Response>", mimetype="application/xml")
 
     history = load_conversation(sid)
-
     if not history:
         if direction == "inbound":
-            greeting = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. How can I help you?"
+            intro = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. How can I help you?"
         elif direction == "outbound-api":
-            greeting = "Hey, this is Nick with AhCHOO Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
+            intro = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
         else:
-            greeting = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
+            intro = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
+        history.append({"role": "assistant", "content": intro})
 
-        history = [{"role": "assistant", "content": greeting}]
-        save_conversation(sid, history)
+    history.insert(0, {
+        "role": "system",
+        "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
+    })
 
-        return generate_tts_and_response(greeting)
-
-    # FAQ Shortcut
-    for keyword, answer in FAQ_RESPONSES.items():
-        if keyword in user_input.lower():
-            print(f"⚡ FAQ matched: {keyword}")
-            return generate_tts_and_response(answer)
-
+    history.append({"role": "user", "content": user_input})
     user_zip = extract_zip_or_city(user_input)
-    calendar_reply = ""
+    print(f"📍 ZIP extracted: {user_zip}", flush=True)
+
     if user_zip:
         try:
             creds = load_credentials()
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                print("🔁 Credentials refreshed")
             service = build('calendar', 'v3', credentials=creds)
             now = datetime.datetime.utcnow().isoformat() + 'Z'
             events = service.events().list(calendarId='primary', timeMin=now,
                                            maxResults=10, singleEvents=True,
                                            orderBy='startTime').execute().get('items', [])
             matches = get_calendar_zip_matches(user_zip, events)
-            calendar_reply = build_zip_prompt(user_zip, matches)
-            print(f"📅 Calendar reply: {calendar_reply}")
+            reply = build_zip_prompt(user_zip, matches)
         except Exception as e:
-            print("❌ Calendar error:", e)
-            calendar_reply = "Sorry, I couldn't access our calendar, but I can still help you schedule something."
-
-    if not any(m.get("role") == "system" for m in history):
-        history.insert(0, {
-            "role": "system",
-            "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Be helpful, friendly, and professional. Ask for ZIP codes and schedule estimates using availability."
-        })
-
-    history.append({"role": "user", "content": user_input})
-    if calendar_reply:
-        history.append({"role": "assistant", "content": calendar_reply})
-
-    save_conversation(sid, history)
+            print("❌ Calendar access error:", e)
+            reply = "Sorry, I couldn't check our calendar. But I can still help you schedule something."
+        history.append({"role": "assistant", "content": reply})
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
     response = client.chat.completions.create(
@@ -165,12 +183,10 @@ def voice():
         messages=history
     )
     reply = response.choices[0].message.content.strip()
+    print(f"🤖 GPT reply: {reply}", flush=True)
     history.append({"role": "assistant", "content": reply})
     save_conversation(sid, history)
 
-    return generate_tts_and_response(reply)
-
-def generate_tts_and_response(text):
     tts = requests.post(
         f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
         headers={
@@ -178,8 +194,8 @@ def generate_tts_and_response(text):
             "Content-Type": "application/json"
         },
         json={
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
+            "text": reply,
+            "model_id": "eleven_monolingual_v1",
             "voice_settings": {
                 "stability": 0.85,
                 "similarity_boost": 1.0
@@ -189,7 +205,7 @@ def generate_tts_and_response(text):
 
     if tts.status_code != 200:
         print("❌ ElevenLabs error:", tts.status_code, tts.text)
-        return Response("<Response><Say>Sorry, something went wrong with the voice system.</Say></Response>", mimetype="application/xml")
+        return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
 
     filename = f"{uuid.uuid4()}.mp3"
     filepath = f"static/{filename}"
@@ -213,8 +229,6 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}", flush=True)
     app.run(host="0.0.0.0", port=port)
-
-
 
 
 
