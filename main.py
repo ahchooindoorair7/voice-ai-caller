@@ -160,58 +160,6 @@ def test_openai():
     except Exception as e:
         return f"❌ OpenAI API test failed: {e}"
 
-        return response.choices[0].message["content"]
-    except Exception as e:
-        return f"❌ Failed to call OpenAI API: {str(e)}"
-
-@app.route("/voice", methods=["POST"])
-def voice():
-    direction = request.form.get("Direction", "").lower()
-    sid = request.form.get("CallSid", str(uuid.uuid4()))
-    user_input = request.form.get("SpeechResult", "").strip()
-
-    if "goodbye" in user_input.lower():
-        clear_conversation(sid)
-        return Response("<Response><Say>Okay, goodbye! Thanks for calling.</Say><Hangup/></Response>", mimetype="application/xml")
-
-    history = load_conversation(sid)
-    if not history:
-        if direction == "inbound":
-            intro = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. How can I help you?"
-        elif direction == "outbound-api":
-            intro = "Hey, this is Nick with AhCHOO! Indoor Air Quality Specialists. You submitted an action form looking to get some information on our air duct cleaning & HVAC sanitation process. What is your zip code so I can make sure we service your area?"
-        else:
-            intro = "Hi, this is Nick from AhCHOO! Indoor Air Quality Specialists. How can I help you?"
-        history.append({"role": "assistant", "content": intro})
-
-    history.insert(0, {
-        "role": "system",
-        "content": "You are Nick from AH-CHOO! Indoor Air Quality Specialists. Speak friendly and professionally. Ask for ZIP codes, offer calendar availability, and schedule estimates."
-    })
-
-    history.append({"role": "user", "content": user_input})
-    user_zip = extract_zip_or_city(user_input)
-
-    redis_client.set(f"history:{sid}", json.dumps(history), ex=3600)
-    redis_client.set(f"zip:{sid}", user_zip or "", ex=3600)
-
-    if user_zip and PRELOADED_ZIP_THINKING_MESSAGES:
-        thinking_path = random.choice(PRELOADED_ZIP_THINKING_MESSAGES)
-    elif PRELOADED_THINKING_MESSAGES:
-        thinking_path = random.choice(PRELOADED_THINKING_MESSAGES)
-    else:
-        thinking_path = None
-
-    if not thinking_path:
-        return Response("<Response><Say>One moment while I check on that.</Say><Redirect>/response</Redirect></Response>", mimetype="application/xml")
-
-    return Response(f"""
-    <Response>
-        <Play>https://{request.host}/{thinking_path}</Play>
-        <Redirect>/response?sid={sid}</Redirect>
-    </Response>
-    """, mimetype="application/xml")
-
 @app.route("/response", methods=["POST", "GET"])
 def response():
     sid = request.values.get("sid")
@@ -234,8 +182,8 @@ def response():
             calendar_prompt = build_zip_prompt(user_zip, matches)
             history.append({"role": "assistant", "content": calendar_prompt})
 
-        openai.api_key = OPENAI_API_KEY
-        response = openai.ChatCompletion.create(
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
             model="gpt-4o",
             messages=history,
             stream=True
@@ -259,7 +207,17 @@ def response():
     return Response(f"""
     <Response>
         <Play>https://{request.host}/{reply_path}</Play>
-        <Gather input="speech" action="/voice" method="POST" timeout="5" />
+        <Gather input=\"speech\" action=\"/voice\" method=\"POST\" timeout=\"5\" />
+    </Response>
+    """, mimetype="application/xml")
+
+    if not thinking_path:
+        return Response("<Response><Say>One moment while I check on that.</Say><Redirect>/response</Redirect></Response>", mimetype="application/xml")
+
+    return Response(f"""
+    <Response>
+        <Play>https://{request.host}/{thinking_path}</Play>
+        <Redirect>/response?sid={sid}</Redirect>
     </Response>
     """, mimetype="application/xml")
 
