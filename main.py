@@ -161,27 +161,29 @@ def test_openai():
 def static_files(filename):
     return send_from_directory('static', filename)
 
-# ========== CUSTOM GREETING ON INBOUND CALL ========== #
+# ========== GREETING ON INBOUND CALL (simple filename) ==========
 @app.route("/voice-greeting", methods=["POST", "GET"])
 def voice_greeting():
-    """
-    Entry point for inbound calls: Plays a user-provided greeting MP3, then hands off to /response to start AI.
-    """
     sid = request.values.get("CallSid") or request.values.get("sid") or request.args.get("sid") or str(uuid.uuid4())
-    # The user's MP3 has been uploaded as:
-    greeting_filename = "ElevenLabs_2025-05-28T06_07_15_Nick's Clone_pvc_sp100_s50_sb75_se40_b_m2.mp3"
+    greeting_filename = "greeting.mp3"  # use a simple file name!
     greeting_url = f"https://{request.host}/static/{greeting_filename}"
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
-        <Redirect method=\"POST\">/response?sid={sid}</Redirect>
+        <Redirect method="POST">/response?sid={sid}</Redirect>
     </Response>
     """, mimetype="application/xml")
-# ========== END CUSTOM GREETING ========== #
+# ========== END GREETING ========== #
 
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
-    sid = request.values.get("sid") or request.args.get("sid")
+    # Patch: use sid or CallSid from any source
+    sid = (
+        request.values.get("sid")
+        or request.args.get("sid")
+        or request.values.get("CallSid")
+        or request.args.get("CallSid")
+    )
     if not sid:
         return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
 
@@ -191,7 +193,6 @@ def response_route():
 
     gpt_reply = ""
     try:
-        # Calendar prompt if zip available
         if user_zip:
             creds = load_credentials()
             if creds and creds.expired and creds.refresh_token:
@@ -240,21 +241,23 @@ def response_route():
 
 @app.route("/voice", methods=["POST"])
 def voice_route():
-    sid = request.values.get("sid") or request.args.get("sid")
+    sid = (
+        request.values.get("sid")
+        or request.args.get("sid")
+        or request.values.get("CallSid")
+        or request.args.get("CallSid")
+    )
     user_input = request.values.get("SpeechResult", "")
     print(f"Received voice input: {user_input}")
 
-    # Save/append the user's input to conversation history
     history = load_conversation(sid)
     if user_input:
         history.append({"role": "user", "content": user_input})
-        # Optionally, extract ZIP code and cache it
         zip_found = extract_zip_or_city(user_input)
         if zip_found:
             redis_client.set(f"zip:{sid}", zip_found, ex=900)
     save_conversation(sid, history)
 
-    # Redirect back to /response to continue the dialogue loop
     return redirect(f"/response?sid={sid}")
 
 @app.route("/", methods=["GET"])
@@ -265,4 +268,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)
-
