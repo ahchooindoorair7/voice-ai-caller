@@ -195,10 +195,10 @@ def voice():
         },
         json={
             "text": reply,
-            "model_id": "eleven_monolingual_v1",
+            "model_id": "eleven_multilingual_v2",
             "voice_settings": {
                 "stability": 0.50,
-                "similarity_boost": 1.0
+                "similarity_boost": 0.75
             }
         }
     )
