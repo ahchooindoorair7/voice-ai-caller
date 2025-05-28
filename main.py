@@ -197,7 +197,7 @@ def voice():
             "text": reply,
             "model_id": "eleven_monolingual_v1",
             "voice_settings": {
-                "stability": 0.85,
+                "stability": 0.50,
                 "similarity_boost": 1.0
             }
         }
