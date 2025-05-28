@@ -8,6 +8,7 @@ import re
 import redis
 import shutil
 import random
+import threading
 import concurrent.futures
 
 from flask import Flask, request, Response, redirect
@@ -167,15 +168,18 @@ def voice():
     history.append({"role": "user", "content": user_input})
     user_zip = extract_zip_or_city(user_input)
 
-    # Context-aware thinking messages
     generic_thinking_lines = [
-        "Alright, let me go ahead and check that out for you real quick. Just give me a moment.",
-        "Give me just a moment while I look into that for you. It should not take long here. ",
-        "Perfect I can definitely help you out here. Give me a second while I go through some things.",
+        "Alright, let me go ahead and check that out for you real quick.",
+        "Give me just a moment while I look into that for you.",
+        "Let me take a look real quick and see what I can find.",
         "Okay, hang tight — I’m just checking a few things.",
+        "One second — I’m pulling up the details now."
     ]
     zip_thinking_lines = [
-        "Alright give me a second — I’m pulling up our calendar that way I can cross reference when we will be close to your area to ensure we are there as on time as possible for you.",
+        "Okay, let me check your ZIP code and see when we’ll be in that area.",
+        "Just a moment — I’m checking the schedule for your neighborhood.",
+        "Great, let me see when we’ll next be near your location.",
+        "Let me take a second to look at the calendar and find availability near you."
     ]
     thinking_lines = zip_thinking_lines if user_zip else generic_thinking_lines
     thinking_text = random.choice(thinking_lines)
@@ -184,17 +188,12 @@ def voice():
     if not thinking_path:
         return Response("<Response><Say>One moment while I check on that.</Say></Response>", mimetype="application/xml")
 
-    # Kick off GPT response generation in background
+    # Start GPT generation in a thread
     gpt_reply = ""
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future_gpt = executor.submit(lambda: openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
-            model="gpt-4o",
-            messages=history,
-            stream=True
-        ))
-
-        if user_zip:
-            try:
+    def generate_gpt():
+        nonlocal gpt_reply
+        try:
+            if user_zip:
                 creds = load_credentials()
                 if creds and creds.expired and creds.refresh_token:
                     creds.refresh(Request())
@@ -206,14 +205,22 @@ def voice():
                 matches = get_calendar_zip_matches(user_zip, events)
                 calendar_prompt = build_zip_prompt(user_zip, matches)
                 history.append({"role": "assistant", "content": calendar_prompt})
-            except Exception as e:
-                print("❌ Calendar access error:", e)
 
-        response = future_gpt.result()
-        for chunk in response:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                gpt_reply += delta
+            response = openai.OpenAI(api_key=OPENAI_API_KEY).chat.completions.create(
+                model="gpt-4o",
+                messages=history,
+                stream=True
+            )
+            for chunk in response:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    gpt_reply += delta
+        except Exception as e:
+            print("❌ GPT generation error:", e)
+
+    thread = threading.Thread(target=generate_gpt)
+    thread.start()
+    thread.join()
 
     print(f"🤖 GPT reply: {gpt_reply}")
     history.append({"role": "assistant", "content": gpt_reply})
