@@ -270,6 +270,18 @@ def voice_route():
 def root():
     return "Nick AI Voice Agent is running."
 
+@app.route("/static-test", methods=["GET"])
+def static_test():
+    test_path = "static/testfile.txt"
+    try:
+        with open(test_path, "w") as f:
+            f.write("STATIC FOLDER WRITE SUCCESS!")
+        return "✅ Successfully wrote to static/testfile.txt!"
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        return f"❌ FAILED to write file: {str(e)}\n\n{tb}"
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}")
