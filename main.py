@@ -70,6 +70,7 @@ def synthesize_speech(text):
     print("ElevenLabs status code:", tts.status_code)
     if tts.status_code != 200:
         print("❌ ElevenLabs error:", tts.status_code, tts.text)
+        print("Returning error: Sorry, there was an error playing the response.")
         return None
     filename = f"{uuid.uuid4()}.mp3"
     filepath = f"static/{filename}"
@@ -79,6 +80,7 @@ def synthesize_speech(text):
         print("MP3 file written at:", filepath)
     except Exception as file_err:
         print("❌ Error writing MP3 file:", file_err)
+        print("Returning error: Sorry, there was an error playing the response.")
         return None
     return filename  # just the filename
 
@@ -111,12 +113,14 @@ def load_credentials():
     token_json = os.environ.get("GOOGLE_TOKEN")
     if not token_json:
         print("❌ No GOOGLE_TOKEN environment variable found.")
+        print("Returning error: Sorry, there was an error processing your request (missing Google token).")
         return None
     try:
         data = json.loads(token_json)
         return Credentials.from_authorized_user_info(data, SCOPES)
     except Exception as e:
         print("❌ Failed to load credentials from GOOGLE_TOKEN:", e)
+        print("Returning error: Sorry, there was an error processing your request (bad Google token).")
         return None
 
 def load_conversation(sid):
@@ -171,7 +175,6 @@ def voice_greeting():
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
     print("Starting /response_route")  # <----- PINPOINT LOG
-    # SET THIS TO TRUE TO TEST WITH HARDCODED TEXT, BYPASSING OPENAI/GOOGLE
     HARD_CODED_MODE = False
 
     sid = (
@@ -183,7 +186,7 @@ def response_route():
     print(f"SID received in /response: {sid}")
 
     if not sid:
-        print("❌ SID missing!")
+        print("❌ SID missing! Returning early error (missing session ID).")
         return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
 
     history = load_conversation(sid)
@@ -200,6 +203,10 @@ def response_route():
         try:
             if user_zip:
                 creds = load_credentials()
+                if not creds:
+                    print("❌ Failed to get Google creds. Returning error.")
+                    print("Returning error: Sorry, there was an error processing your request (Google creds).");
+                    return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
                 if creds and creds.expired and creds.refresh_token:
                     creds.refresh(Request())
                 service = build('calendar', 'v3', credentials=creds)
@@ -225,12 +232,14 @@ def response_route():
             print(f"Final GPT reply: '{gpt_reply}'")  # <----- PINPOINT LOG
 
             if not gpt_reply.strip():
+                print("GPT reply was empty after OpenAI call. Returning error to caller.")
                 gpt_reply = "Sorry, there was an issue with my response. Can you try again?"
 
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
             print(f"❌ GPT generation error: {e}\n{tb}")
+            print("Returning error: Sorry, there was an error processing your request (OpenAI/other except).");
             return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
 
     print(f"🤖 GPT reply to synthesize: {gpt_reply}")
@@ -240,7 +249,8 @@ def response_route():
     reply_filename = synthesize_speech(gpt_reply)
     print("Reply filename to play:", reply_filename)
     if not reply_filename:
-        print("❌ Failed to synthesize speech or save file!")
+        print("❌ Failed to synthesize speech or save file! Returning error to caller.")
+        print("Returning error: Sorry, there was an error playing the response.")
         return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
 
     play_url = f"https://{request.host}/static/{reply_filename}"
