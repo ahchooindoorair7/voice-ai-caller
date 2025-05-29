@@ -170,7 +170,7 @@ def voice_greeting():
 
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
-    print("Starting /response_route")
+    print("Starting /response_route")  # <----- PINPOINT LOG
     # SET THIS TO TRUE TO TEST WITH HARDCODED TEXT, BYPASSING OPENAI/GOOGLE
     HARD_CODED_MODE = False
 
@@ -184,7 +184,6 @@ def response_route():
 
     if not sid:
         print("❌ SID missing!")
-        print("Leaving /response_route")
         return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
 
     history = load_conversation(sid)
@@ -192,7 +191,8 @@ def response_route():
     user_zip = user_zip.decode() if user_zip else None
     print(f"user_zip: {user_zip}")
 
-    print("About to enter try/except block")
+    print("About to enter try/except block")  # <----- PINPOINT LOG
+
     if HARD_CODED_MODE:
         gpt_reply = "Hello, this is a test of ElevenLabs speech and your static folder. If you hear this, everything is working up to this point!"
     else:
@@ -211,8 +211,7 @@ def response_route():
                 calendar_prompt = build_zip_prompt(user_zip, matches)
                 history.append({"role": "assistant", "content": calendar_prompt})
 
-            # STEP 1: Print chat history before OpenAI call
-            print("OpenAI chat history:", history)
+            print("OpenAI chat history:", history)  # <----- PINPOINT LOG
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
             response = client.chat.completions.create(
                 model="gpt-4o",
@@ -220,12 +219,11 @@ def response_route():
                 stream=True
             )
             for chunk in response:
-                # STEP 2: Print every chunk from OpenAI streaming
-                print('Got OpenAI chunk:', chunk)
+                print('Got OpenAI chunk:', chunk)  # <----- PINPOINT LOG
                 if hasattr(chunk.choices[0].delta, "content"):
                     gpt_reply += chunk.choices[0].delta.content or ""
-            # STEP 3: Print the final reply
-            print(f"Final GPT reply: '{gpt_reply}'")
+            print(f"Final GPT reply: '{gpt_reply}'")  # <----- PINPOINT LOG
+
             if not gpt_reply.strip():
                 gpt_reply = "Sorry, there was an issue with my response. Can you try again?"
 
@@ -233,7 +231,6 @@ def response_route():
             import traceback
             tb = traceback.format_exc()
             print(f"❌ GPT generation error: {e}\n{tb}")
-            print("Leaving /response_route")
             return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
 
     print(f"🤖 GPT reply to synthesize: {gpt_reply}")
@@ -244,12 +241,11 @@ def response_route():
     print("Reply filename to play:", reply_filename)
     if not reply_filename:
         print("❌ Failed to synthesize speech or save file!")
-        print("Leaving /response_route")
         return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
 
     play_url = f"https://{request.host}/static/{reply_filename}"
     print("Returning TwiML to play:", play_url)
-    print("Leaving /response_route")
+    print("Leaving /response_route")  # <----- PINPOINT LOG
     return Response(f"""
     <Response>
         <Play>{play_url}</Play>
