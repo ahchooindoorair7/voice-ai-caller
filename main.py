@@ -48,7 +48,7 @@ if os.path.exists(PRELOADED_ZIP_THINKING_MESSAGES_FOLDER):
         if f.endswith(".mp3"):
             PRELOADED_ZIP_THINKING_MESSAGES.append(f"static/thinking_zip/{f}")
 
-# Removed clean_static_folder()
+# No clean_static_folder() here
 
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
@@ -147,12 +147,12 @@ def test_openai():
 def static_files(filename):
     return send_from_directory('static', filename)
 
-# ========== GREETING ON INBOUND CALL (Google Drive version) ==========
+# ========== GREETING ON INBOUND CALL (Catbox version) ==========
 @app.route("/voice-greeting", methods=["POST", "GET"])
 def voice_greeting():
     sid = request.values.get("CallSid") or request.values.get("sid") or request.args.get("sid") or str(uuid.uuid4())
-    # Use Google Drive direct download link for the greeting
-    greeting_url = "https://drive.google.com/uc?export=download&id=1mu5hHhT3VxxQM-C9F2cHozSULjgvVGY2"
+    # Use Catbox direct link for the greeting
+    greeting_url = "https://files.catbox.moe/lmmt31.mp3"
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
