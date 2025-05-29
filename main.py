@@ -187,10 +187,11 @@ def voice_greeting():
     greeting_url = "https://files.catbox.moe/lmmt31.mp3"
     print(f"New inbound call, SID: {sid}. Greeting will play from {greeting_url}")
     print("LEAVING /voice-greeting")
+    # Play the greeting, then immediately Gather for user's first input!
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
-        <Redirect method="POST">/response?sid={sid}</Redirect>
+        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" />
     </Response>
     """, mimetype="application/xml")
 
@@ -344,3 +345,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)
+
