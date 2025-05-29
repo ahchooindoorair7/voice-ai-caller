@@ -222,7 +222,9 @@ def response_route():
                 gpt_reply = "Sorry, there was an issue with my response. Can you try again?"
 
         except Exception as e:
-            print("❌ GPT generation error:", e)
+            import traceback
+            tb = traceback.format_exc()
+            print(f"❌ GPT generation error: {e}\n{tb}")
             return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
 
     print(f"🤖 GPT reply to synthesize: {gpt_reply}")
