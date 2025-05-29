@@ -171,7 +171,7 @@ def voice_greeting():
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
     # SET THIS TO TRUE TO TEST WITH HARDCODED TEXT, BYPASSING OPENAI/GOOGLE
-    HARD_CODED_MODE = True
+    HARD_CODED_MODE = False
 
     sid = (
         request.values.get("sid")
