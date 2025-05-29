@@ -161,12 +161,12 @@ def test_openai():
 def static_files(filename):
     return send_from_directory('static', filename)
 
-# ========== GREETING ON INBOUND CALL (simple filename) ==========
+# ========== GREETING ON INBOUND CALL (Google Drive version) ==========
 @app.route("/voice-greeting", methods=["POST", "GET"])
 def voice_greeting():
     sid = request.values.get("CallSid") or request.values.get("sid") or request.args.get("sid") or str(uuid.uuid4())
-    greeting_filename = "greeting.mp3"  # use a simple file name!
-    greeting_url = f"https://{request.host}/static/{greeting_filename}"
+    # Use Google Drive direct download link for the greeting
+    greeting_url = "https://drive.google.com/uc?export=download&id=1mu5hHhT3VxxQM-C9F2cHozSULjgvVGY2"
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
@@ -177,7 +177,6 @@ def voice_greeting():
 
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
-    # Patch: use sid or CallSid from any source
     sid = (
         request.values.get("sid")
         or request.args.get("sid")
