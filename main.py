@@ -48,21 +48,7 @@ if os.path.exists(PRELOADED_ZIP_THINKING_MESSAGES_FOLDER):
         if f.endswith(".mp3"):
             PRELOADED_ZIP_THINKING_MESSAGES.append(f"static/thinking_zip/{f}")
 
-def clean_static_folder():
-    folder = 'static'
-    if os.path.exists(folder):
-        for filename in os.listdir(folder):
-            filepath = os.path.join(folder, filename)
-            try:
-                if os.path.isfile(filepath) and not (
-                    filepath.startswith(os.path.join(folder, "thinking")) or
-                    filepath.startswith(os.path.join(folder, "thinking_zip"))
-                ):
-                    os.remove(filepath)
-            except Exception as e:
-                print(f"Error deleting file {filename}: {e}")
-
-clean_static_folder()
+# Removed clean_static_folder()
 
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
