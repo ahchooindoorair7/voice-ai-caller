@@ -110,7 +110,7 @@ def build_zip_prompt(user_zip, matches):
     if matches:
         return f"We’ll already be in your area ({user_zip}) at {', '.join(matches[:2])}. Would one of those work for a free estimate?"
     else:
-        return f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day works best?"
+        return f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day & time works best?"
 
 def load_credentials():
     print("ENTER load_credentials()")
@@ -187,11 +187,11 @@ def voice_greeting():
     greeting_url = "https://files.catbox.moe/lmmt31.mp3"
     print(f"New inbound call, SID: {sid}. Greeting will play from {greeting_url}")
     print("LEAVING /voice-greeting")
-    # Play the greeting, then immediately Gather for user's first input!
+    # *** FIXED: No redirect to /response; just gather speech after greeting! ***
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
-        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" />
+        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" speechTimeout="auto" />
     </Response>
     """, mimetype="application/xml")
 
@@ -222,7 +222,7 @@ def response_route():
     if not history:
         history.append({
             "role": "system",
-            "content": "You are a helpful sales assistant for a home services company. Respond conversationally, be helpful, and always try to book the caller for an appointment."
+            "content": "You are a helpful sales assistant for a premium high end air duct cleaning company that has been in business for 37 years. Backed by our 5 star review rating on all platforms, we are the most high end air quality company you can find. We are a state licensed mold remediation contractor as well. Respond conversationally & professionaly. Great customer service is very important. If it is an outbound call then your goal should be to book them for a free estimate by asking for their ZIP code. Then cross reference our google calendar to find a time we will be in their area. If it is an inbound call & they say they are looking to get a quote, price, or estimate... then your goalshould be to book an estimate. So ask them for their ZIP code at that point to cross reference it with the calendar."
         })
 
     print("About to enter try/except block")
@@ -291,7 +291,7 @@ def response_route():
     return Response(f"""
     <Response>
         <Play>{play_url}</Play>
-        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" />
+        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" speechTimeout="auto" />
     </Response>
     """, mimetype="application/xml")
 
@@ -305,7 +305,7 @@ def voice_route():
         or request.args.get("CallSid")
     )
     user_input = request.values.get("SpeechResult", "")
-    print(f"Received voice input: {user_input}")
+    print(f"Received voice input: '{user_input}'")
 
     history = load_conversation(sid)
     if user_input:
@@ -313,6 +313,8 @@ def voice_route():
         zip_found = extract_zip_or_city(user_input)
         if zip_found:
             redis_client.set(f"zip:{sid}", zip_found, ex=900)
+    else:
+        print("❌ No speech recognized from caller.")
     save_conversation(sid, history)
 
     print(f"Redirecting back to /response for SID {sid}")
@@ -345,4 +347,3 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 Starting server on port {port}")
     app.run(host="0.0.0.0", port=port)
-
