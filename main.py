@@ -48,8 +48,8 @@ if os.path.exists(PRELOADED_ZIP_THINKING_MESSAGES_FOLDER):
         if f.endswith(".mp3"):
             PRELOADED_ZIP_THINKING_MESSAGES.append(f"static/thinking_zip/{f}")
 
-# Debug-Enhanced TTS
 def synthesize_speech(text):
+    print("ENTER synthesize_speech()")
     print("Calling ElevenLabs TTS with text:", text)
     tts = requests.post(
         f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
@@ -71,6 +71,7 @@ def synthesize_speech(text):
     if tts.status_code != 200:
         print("❌ ElevenLabs error:", tts.status_code, tts.text)
         print("Returning error: Sorry, there was an error playing the response.")
+        print("LEAVING synthesize_speech()")
         return None
     filename = f"{uuid.uuid4()}.mp3"
     filepath = f"static/{filename}"
@@ -81,7 +82,9 @@ def synthesize_speech(text):
     except Exception as file_err:
         print("❌ Error writing MP3 file:", file_err)
         print("Returning error: Sorry, there was an error playing the response.")
+        print("LEAVING synthesize_speech()")
         return None
+    print("LEAVING synthesize_speech()")
     return filename  # just the filename
 
 def extract_zip_or_city(text):
@@ -110,38 +113,50 @@ def build_zip_prompt(user_zip, matches):
         return f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day works best?"
 
 def load_credentials():
+    print("ENTER load_credentials()")
     token_json = os.environ.get("GOOGLE_TOKEN")
     if not token_json:
         print("❌ No GOOGLE_TOKEN environment variable found.")
         print("Returning error: Sorry, there was an error processing your request (missing Google token).")
+        print("LEAVING load_credentials()")
         return None
     try:
         data = json.loads(token_json)
-        return Credentials.from_authorized_user_info(data, SCOPES)
+        creds = Credentials.from_authorized_user_info(data, SCOPES)
+        print("LEAVING load_credentials()")
+        return creds
     except Exception as e:
         print("❌ Failed to load credentials from GOOGLE_TOKEN:", e)
         print("Returning error: Sorry, there was an error processing your request (bad Google token).")
+        print("LEAVING load_credentials()")
         return None
 
 def load_conversation(sid):
+    print(f"ENTER load_conversation({sid})")
     key = f"history:{sid}"
     data = redis_client.get(key)
     print(f"Loaded conversation for {sid}: {data}")
+    print(f"LEAVING load_conversation({sid})")
     return json.loads(data.decode()) if data else []
 
 def save_conversation(sid, history):
+    print(f"ENTER save_conversation({sid})")
     key = f"history:{sid}"
     if len(history) > 7:
         history = history[:1] + history[-6:]
     redis_client.set(key, json.dumps(history), ex=3600)
     print(f"Saved conversation for {sid}")
+    print(f"LEAVING save_conversation({sid})")
 
 def clear_conversation(sid):
+    print(f"ENTER clear_conversation({sid})")
     key = f"history:{sid}"
     redis_client.delete(key)
+    print(f"LEAVING clear_conversation({sid})")
 
 @app.route("/test-openai", methods=["GET"])
 def test_openai():
+    print("ENTER /test-openai")
     try:
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
         response = client.chat.completions.create(
@@ -151,20 +166,27 @@ def test_openai():
                 {"role": "user", "content": "Say hello!"}
             ]
         )
+        print("LEAVING /test-openai")
         return response.choices[0].message.content
     except Exception as e:
+        print("❌ OpenAI API test failed: {e}")
+        print("LEAVING /test-openai")
         return f"❌ OpenAI API test failed: {e}"
 
 @app.route("/static/<path:filename>")
 def static_files(filename):
-    return send_from_directory('static', filename)
+    print("ENTER /static/<path:filename>")
+    response = send_from_directory('static', filename)
+    print("LEAVING /static/<path:filename>")
+    return response
 
-# ========== GREETING ON INBOUND CALL (Catbox version) ==========
 @app.route("/voice-greeting", methods=["POST", "GET"])
 def voice_greeting():
+    print("ENTER /voice-greeting")
     sid = request.values.get("CallSid") or request.values.get("sid") or request.args.get("sid") or str(uuid.uuid4())
     greeting_url = "https://files.catbox.moe/lmmt31.mp3"
     print(f"New inbound call, SID: {sid}. Greeting will play from {greeting_url}")
+    print("LEAVING /voice-greeting")
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
@@ -174,7 +196,7 @@ def voice_greeting():
 
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
-    print("Starting /response_route")  # <----- PINPOINT LOG
+    print("ENTER /response_route")  # <----- PINPOINT LOG
     HARD_CODED_MODE = False
 
     sid = (
@@ -187,6 +209,7 @@ def response_route():
 
     if not sid:
         print("❌ SID missing! Returning early error (missing session ID).")
+        print("LEAVING /response_route (SID missing)")
         return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
 
     history = load_conversation(sid)
@@ -194,7 +217,7 @@ def response_route():
     user_zip = user_zip.decode() if user_zip else None
     print(f"user_zip: {user_zip}")
 
-    print("About to enter try/except block")  # <----- PINPOINT LOG
+    print("About to enter try/except block")
 
     if HARD_CODED_MODE:
         gpt_reply = "Hello, this is a test of ElevenLabs speech and your static folder. If you hear this, everything is working up to this point!"
@@ -205,7 +228,7 @@ def response_route():
                 creds = load_credentials()
                 if not creds:
                     print("❌ Failed to get Google creds. Returning error.")
-                    print("Returning error: Sorry, there was an error processing your request (Google creds).");
+                    print("LEAVING /response_route (Google creds fail)")
                     return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
                 if creds and creds.expired and creds.refresh_token:
                     creds.refresh(Request())
@@ -218,7 +241,7 @@ def response_route():
                 calendar_prompt = build_zip_prompt(user_zip, matches)
                 history.append({"role": "assistant", "content": calendar_prompt})
 
-            print("OpenAI chat history:", history)  # <----- PINPOINT LOG
+            print("OpenAI chat history:", history)
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
             response = client.chat.completions.create(
                 model="gpt-4o",
@@ -226,10 +249,10 @@ def response_route():
                 stream=True
             )
             for chunk in response:
-                print('Got OpenAI chunk:', chunk)  # <----- PINPOINT LOG
+                print('Got OpenAI chunk:', chunk)
                 if hasattr(chunk.choices[0].delta, "content"):
                     gpt_reply += chunk.choices[0].delta.content or ""
-            print(f"Final GPT reply: '{gpt_reply}'")  # <----- PINPOINT LOG
+            print(f"Final GPT reply: '{gpt_reply}'")
 
             if not gpt_reply.strip():
                 print("GPT reply was empty after OpenAI call. Returning error to caller.")
@@ -239,7 +262,8 @@ def response_route():
             import traceback
             tb = traceback.format_exc()
             print(f"❌ GPT generation error: {e}\n{tb}")
-            print("Returning error: Sorry, there was an error processing your request (OpenAI/other except).");
+            print("Returning error: Sorry, there was an error processing your request (OpenAI/other except).")
+            print("LEAVING /response_route (OpenAI fail)")
             return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
 
     print(f"🤖 GPT reply to synthesize: {gpt_reply}")
@@ -250,12 +274,12 @@ def response_route():
     print("Reply filename to play:", reply_filename)
     if not reply_filename:
         print("❌ Failed to synthesize speech or save file! Returning error to caller.")
-        print("Returning error: Sorry, there was an error playing the response.")
+        print("LEAVING /response_route (TTS fail)")
         return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
 
     play_url = f"https://{request.host}/static/{reply_filename}"
     print("Returning TwiML to play:", play_url)
-    print("Leaving /response_route")  # <----- PINPOINT LOG
+    print("LEAVING /response_route (SUCCESS)")
     return Response(f"""
     <Response>
         <Play>{play_url}</Play>
@@ -265,6 +289,7 @@ def response_route():
 
 @app.route("/voice", methods=["POST"])
 def voice_route():
+    print("ENTER /voice")
     sid = (
         request.values.get("sid")
         or request.args.get("sid")
@@ -283,22 +308,29 @@ def voice_route():
     save_conversation(sid, history)
 
     print(f"Redirecting back to /response for SID {sid}")
+    print("LEAVING /voice")
     return redirect(f"/response?sid={sid}")
 
 @app.route("/", methods=["GET"])
 def root():
+    print("ENTER / (root)")
+    print("LEAVING / (root)")
     return "Nick AI Voice Agent is running."
 
 @app.route("/static-test", methods=["GET"])
 def static_test():
+    print("ENTER /static-test")
     test_path = "static/testfile.txt"
     try:
         with open(test_path, "w") as f:
             f.write("STATIC FOLDER WRITE SUCCESS!")
+        print("LEAVING /static-test (SUCCESS)")
         return "✅ Successfully wrote to static/testfile.txt!"
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
+        print(f"❌ FAILED to write file: {str(e)}\n\n{tb}")
+        print("LEAVING /static-test (FAIL)")
         return f"❌ FAILED to write file: {str(e)}\n\n{tb}"
 
 if __name__ == "__main__":
