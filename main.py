@@ -6,7 +6,8 @@ import requests
 import openai
 import re
 import redis
-from flask import Flask, request, Response, send_from_directory, redirect
+import random  # <--- Added for random.choice
+from flask import Flask, request, Response, send_from_directory, redirect, url_for
 from flask_session import Session
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -330,9 +331,24 @@ def voice_route():
         print("❌ No speech recognized from caller.")
     save_conversation(sid, history)
 
-    print(f"Redirecting back to /response for SID {sid}")
-    print("LEAVING /voice")
-    return redirect(f"/response?sid={sid}")
+    # --- Play a random "thinking" MP3, then redirect to /response ---
+    if PRELOADED_THINKING_MESSAGES:
+        thinking_file = random.choice(PRELOADED_THINKING_MESSAGES)
+        thinking_url = f"https://{request.host}/{thinking_file}"
+        print(f"Playing thinking file: {thinking_url}")
+        # After playing, Twilio will request /response?sid={sid}
+        twiml = f"""
+        <Response>
+            <Play>{thinking_url}</Play>
+            <Redirect method="POST">{url_for('response_route', sid=sid, _external=True)}</Redirect>
+        </Response>
+        """
+        print("LEAVING /voice with thinking MP3")
+        return Response(twiml, mimetype="application/xml")
+    else:
+        print(f"No thinking MP3s found, redirecting directly to /response for SID {sid}")
+        print("LEAVING /voice")
+        return redirect(f"/response?sid={sid}")
 
 @app.route("/", methods=["GET"])
 def root():
