@@ -218,12 +218,25 @@ def response_route():
     user_zip = user_zip.decode() if user_zip else None
     print(f"user_zip: {user_zip}")
 
-    # ---- PATCH: always seed history with a system prompt if it's empty ----
-    if not history:
-        history.append({
-            "role": "system",
-            "content": "You are a helpful sales assistant for a premium high end air duct cleaning company that has been in business for 37 years. Backed by our 5 star review rating on all platforms, we are the most high end air quality company you can find. We are a state licensed mold remediation contractor as well. Respond conversationally & professionaly. Great customer service is very important. If it is an outbound call then your goal should be to book them for a free estimate by asking for their ZIP code. Then cross reference our google calendar to find a time we will be in their area. If it is an inbound call & they say they are looking to get a quote, price, or estimate... then your goalshould be to book an estimate. So ask them for their ZIP code at that point to cross reference it with the calendar."
-        })
+    # SYSTEM PROMPT - This will **always** be the first message
+    SYSTEM_PROMPT = {
+        "role": "system",
+        "content": (
+            "You are a helpful sales assistant for a premium high end air duct cleaning company that has been in business for 37 years. "
+            "Backed by our 5 star review rating on all platforms, we are the most high end air quality company you can find. "
+            "We are a state licensed mold remediation contractor as well. Respond conversationally & professionally. "
+            "Great customer service is very important. If it is an outbound call then your goal should be to book them for a free estimate by asking for their ZIP code. "
+            "Then cross reference our google calendar to find a time we will be in their area. If it is an inbound call & they say they are looking to get a quote, price, or estimate... "
+            "then your goal should be to book an estimate. So ask them for their ZIP code at that point to cross reference it with the calendar."
+        )
+    }
+
+    # Ensure SYSTEM_PROMPT is ALWAYS FIRST in messages
+    messages = [SYSTEM_PROMPT]
+    for msg in history:
+        if msg.get("role") == "system":
+            continue  # skip any existing system prompts
+        messages.append(msg)
 
     print("About to enter try/except block")
 
@@ -247,13 +260,13 @@ def response_route():
                                                orderBy='startTime').execute().get('items', [])
                 matches = get_calendar_zip_matches(user_zip, events)
                 calendar_prompt = build_zip_prompt(user_zip, matches)
-                history.append({"role": "assistant", "content": calendar_prompt})
+                messages.append({"role": "assistant", "content": calendar_prompt})
 
-            print("OpenAI chat history:", history)
+            print("OpenAI chat history:", messages)
             client = openai.OpenAI(api_key=OPENAI_API_KEY)
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=history,
+                messages=messages,
                 stream=True
             )
             for chunk in response:
