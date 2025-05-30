@@ -6,8 +6,8 @@ import requests
 import openai
 import re
 import redis
-import random  # <--- Added for random.choice
-from flask import Flask, request, Response, send_from_directory, redirect, url_for
+import random  # Needed for random thinking MP3 selection
+from flask import Flask, request, Response, send_from_directory, redirect
 from flask_session import Session
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -33,21 +33,15 @@ city_to_zip = {
 
 redis_client = redis.from_url(REDIS_URL)
 
-PRELOADED_THINKING_MESSAGES = []
-PRELOADED_ZIP_THINKING_MESSAGES = []
+# === CATBOX THINKING MP3 URLs ===
+THINKING_MP3_URLS = [
+    "https://files.catbox.moe/syinri.mp3",
+    "https://files.catbox.moe/nmeg94.mp3",
+    "https://files.catbox.moe/a57hqt.mp3"
+]
 
-PRELOADED_THINKING_MESSAGES_FOLDER = "static/thinking"
-PRELOADED_ZIP_THINKING_MESSAGES_FOLDER = "static/thinking_zip"
-
-if os.path.exists(PRELOADED_THINKING_MESSAGES_FOLDER):
-    for f in os.listdir(PRELOADED_THINKING_MESSAGES_FOLDER):
-        if f.endswith(".mp3"):
-            PRELOADED_THINKING_MESSAGES.append(f"static/thinking/{f}")
-
-if os.path.exists(PRELOADED_ZIP_THINKING_MESSAGES_FOLDER):
-    for f in os.listdir(PRELOADED_ZIP_THINKING_MESSAGES_FOLDER):
-        if f.endswith(".mp3"):
-            PRELOADED_ZIP_THINKING_MESSAGES.append(f"static/thinking_zip/{f}")
+def get_random_thinking_url():
+    return random.choice(THINKING_MP3_URLS)
 
 def synthesize_speech(text):
     print("ENTER synthesize_speech()")
@@ -331,24 +325,17 @@ def voice_route():
         print("❌ No speech recognized from caller.")
     save_conversation(sid, history)
 
-    # --- Play a random "thinking" MP3, then redirect to /response ---
-    if PRELOADED_THINKING_MESSAGES:
-        thinking_file = random.choice(PRELOADED_THINKING_MESSAGES)
-        thinking_url = f"https://{request.host}/{thinking_file}"
-        print(f"Playing thinking file: {thinking_url}")
-        # After playing, Twilio will request /response?sid={sid}
-        twiml = f"""
-        <Response>
-            <Play>{thinking_url}</Play>
-            <Redirect method="POST">{url_for('response_route', sid=sid, _external=True)}</Redirect>
-        </Response>
-        """
-        print("LEAVING /voice with thinking MP3")
-        return Response(twiml, mimetype="application/xml")
-    else:
-        print(f"No thinking MP3s found, redirecting directly to /response for SID {sid}")
-        print("LEAVING /voice")
-        return redirect(f"/response?sid={sid}")
+    # Play a random thinking mp3, then redirect to /response
+    thinking_url = get_random_thinking_url()
+    print("Playing thinking message:", thinking_url)
+    print(f"Redirecting to /response for SID {sid}")
+    print("LEAVING /voice")
+    return Response(f"""
+    <Response>
+        <Play>{thinking_url}</Play>
+        <Redirect method="POST">/response?sid={sid}</Redirect>
+    </Response>
+    """, mimetype="application/xml")
 
 @app.route("/", methods=["GET"])
 def root():
