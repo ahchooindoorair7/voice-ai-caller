@@ -51,24 +51,16 @@ THINKING_MP3_URLS = [
 
 # === THINKING MP3 NO-REPEAT PATCH ===
 def get_next_thinking_url(sid):
-    """
-    Returns a random thinking MP3 URL that hasn't been played yet during this call.
-    Once all have been played, resets and starts over.
-    """
     key_played = f"thinking_played:{sid}"
     played = redis_client.lrange(key_played, 0, -1)
     played = [x.decode("utf-8") for x in played]
-
     not_played = [msg for msg in THINKING_MP3_URLS if msg not in played]
-
     if not_played:
         next_msg = random.choice(not_played)
         redis_client.rpush(key_played, next_msg)
-        # Optional: set short expiry in case call gets abandoned
         redis_client.expire(key_played, 900)
         return next_msg
     else:
-        # All messages played, reset and start again
         redis_client.delete(key_played)
         next_msg = random.choice(THINKING_MP3_URLS)
         redis_client.rpush(key_played, next_msg)
@@ -157,7 +149,7 @@ def load_credentials():
         print("Returning error: Sorry, there was an error processing your request (bad Google token).")
         print("LEAVING load_credentials()")
         return None
-        
+
 def load_conversation(sid):
     print(f"ENTER load_conversation({sid})")
     key = f"history:{sid}"
@@ -180,6 +172,7 @@ def clear_conversation(sid):
     key = f"history:{sid}"
     redis_client.delete(key)
     print(f"LEAVING clear_conversation({sid})")
+
 @app.route("/test-openai", methods=["GET"])
 def test_openai():
     print("ENTER /test-openai")
@@ -192,7 +185,6 @@ def test_openai():
                 {"role": "user", "content": "Say hello!"}
             ]
         )
-        
         print("LEAVING /test-openai")
         return response.choices[0].message.content
     except Exception as e:
@@ -209,12 +201,22 @@ def static_files(filename):
 
 @app.route("/voice-greeting", methods=["POST", "GET"])
 def voice_greeting():
+    # === OUTBOUND & AMD LOGIC ADDED ===
     print("ENTER /voice-greeting")
     sid = request.values.get("CallSid") or request.values.get("sid") or request.args.get("sid") or str(uuid.uuid4())
     greeting_url = "https://files.catbox.moe/lmmt31.mp3"
-    print(f"New inbound call, SID: {sid}. Greeting will play from {greeting_url}")
+
+    # AMD logic - if AnsweredBy=machine, go to voicemail drop
+    answered_by = (request.values.get("AnsweredBy") or "").lower()
+    print(f"AnsweredBy: {answered_by}")
+
+    # Twilio AMD returns things like "machine", "fax", "human", etc.
+    if answered_by in ["machine", "fax", "unknown_machine"]:
+        print("Detected answering machine. Redirecting to /voicemail for voicemail drop.")
+        return redirect("/voicemail", code=307)  # 307 keeps POST data
+
+    print(f"New inbound/outbound call, SID: {sid}. Greeting will play from {greeting_url}")
     print("LEAVING /voice-greeting")
-    # *** FIXED: No redirect to /response; just gather speech after greeting! ***
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
@@ -261,11 +263,10 @@ def response_route():
         )
     }
 
-    # Ensure SYSTEM_PROMPT is ALWAYS FIRST in messages
     messages = [SYSTEM_PROMPT]
     for msg in history:
         if msg.get("role") == "system":
-            continue  # skip any existing system prompts
+            continue
         messages.append(msg)
 
     print("About to enter try/except block")
