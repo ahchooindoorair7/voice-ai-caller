@@ -134,7 +134,29 @@ def load_credentials():
         print("Returning error: Sorry, there was an error processing your request (bad Google token).")
         print("LEAVING load_credentials()")
         return None
+        
+def load_conversation(sid):
+    print(f"ENTER load_conversation({sid})")
+    key = f"history:{sid}"
+    data = redis_client.get(key)
+    print(f"Loaded conversation for {sid}: {data}")
+    print(f"LEAVING load_conversation({sid})")
+    return json.loads(data.decode()) if data else []
 
+def save_conversation(sid, history):
+    print(f"ENTER save_conversation({sid})")
+    key = f"history:{sid}"
+    if len(history) > 15:
+        history = history[:1] + history[-15:]
+    redis_client.set(key, json.dumps(history), ex=3600)
+    print(f"Saved conversation for {sid}")
+    print(f"LEAVING save_conversation({sid})")
+
+def clear_conversation(sid):
+    print(f"ENTER clear_conversation({sid})")
+    key = f"history:{sid}"
+    redis_client.delete(key)
+    print(f"LEAVING clear_conversation({sid})")
 @app.route("/test-openai", methods=["GET"])
 def test_openai():
     print("ENTER /test-openai")
@@ -147,6 +169,7 @@ def test_openai():
                 {"role": "user", "content": "Say hello!"}
             ]
         )
+        
         print("LEAVING /test-openai")
         return response.choices[0].message.content
     except Exception as e:
