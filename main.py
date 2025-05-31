@@ -49,8 +49,31 @@ THINKING_MP3_URLS = [
     "https://files.catbox.moe/3mf7m8.mp3"
 ]
 
-def get_random_thinking_url():
-    return random.choice(THINKING_MP3_URLS)
+# === THINKING MP3 NO-REPEAT PATCH ===
+def get_next_thinking_url(sid):
+    """
+    Returns a random thinking MP3 URL that hasn't been played yet during this call.
+    Once all have been played, resets and starts over.
+    """
+    key_played = f"thinking_played:{sid}"
+    played = redis_client.lrange(key_played, 0, -1)
+    played = [x.decode("utf-8") for x in played]
+
+    not_played = [msg for msg in THINKING_MP3_URLS if msg not in played]
+
+    if not_played:
+        next_msg = random.choice(not_played)
+        redis_client.rpush(key_played, next_msg)
+        # Optional: set short expiry in case call gets abandoned
+        redis_client.expire(key_played, 900)
+        return next_msg
+    else:
+        # All messages played, reset and start again
+        redis_client.delete(key_played)
+        next_msg = random.choice(THINKING_MP3_URLS)
+        redis_client.rpush(key_played, next_msg)
+        redis_client.expire(key_played, 900)
+        return next_msg
 
 def synthesize_speech(text):
     print("ENTER synthesize_speech()")
@@ -334,8 +357,9 @@ def voice_route():
         print("❌ No speech recognized from caller.")
     save_conversation(sid, history)
 
-    # Play a random thinking mp3, then redirect to /response
-    thinking_url = get_random_thinking_url()
+    # === THINKING MP3 NO-REPEAT PATCH ===
+    thinking_url = get_next_thinking_url(sid)
+
     print("Playing thinking message:", thinking_url)
     print(f"Redirecting to /response for SID {sid}")
     print("LEAVING /voice")
