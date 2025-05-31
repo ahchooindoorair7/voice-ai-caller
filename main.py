@@ -373,6 +373,18 @@ def voice_route():
     </Response>
     """, mimetype="application/xml")
 
+@app.route("/voicemail", methods=["POST", "GET"])
+def voicemail_route():
+    # === VOICEMAIL DROP ===
+    voicemail_url = "https://files.catbox.moe/0ugvt7.mp3"
+    print(f"Voicemail drop initiated, playing: {voicemail_url}")
+    return Response(f"""
+    <Response>
+        <Play>{voicemail_url}</Play>
+        <Hangup/>
+    </Response>
+    """, mimetype="application/xml")
+
 @app.route("/", methods=["GET"])
 def root():
     print("ENTER / (root)")
