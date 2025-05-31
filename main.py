@@ -35,9 +35,18 @@ redis_client = redis.from_url(REDIS_URL)
 
 # === CATBOX THINKING MP3 URLs ===
 THINKING_MP3_URLS = [
-    "https://files.catbox.moe/syinri.mp3",
-    "https://files.catbox.moe/nmeg94.mp3",
-    "https://files.catbox.moe/a57hqt.mp3"
+    "https://files.catbox.moe/jopp93.mp3",
+    "https://files.catbox.moe/gtd4tf.mp3",
+    "https://files.catbox.moe/73kelo.mp3",
+    "https://files.catbox.moe/m5y5zr.mp3",
+    "https://files.catbox.moe/z03s82.mp3",
+    "https://files.catbox.moe/98ortq.mp3",
+    "https://files.catbox.moe/dkmme7.mp3",
+    "https://files.catbox.moe/7nwbgt.mp3",
+    "https://files.catbox.moe/1yusua.mp3",
+    "https://files.catbox.moe/e8he55.mp3",
+    "https://files.catbox.moe/2ktwl5.mp3",
+    "https://files.catbox.moe/e1en07.mp3"
 ]
 
 def get_random_thinking_url():
