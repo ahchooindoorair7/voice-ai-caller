@@ -276,7 +276,7 @@ def voice_greeting():
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
-        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" speechTimeout="auto" />
+        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="10" speechTimeout="auto" />
     </Response>
     """, mimetype="application/xml")
 
