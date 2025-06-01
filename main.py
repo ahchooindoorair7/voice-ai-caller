@@ -7,6 +7,8 @@ import openai
 import re
 import redis
 import random  # Needed for random thinking MP3 selection
+import concurrent.futures
+import time
 from flask import Flask, request, Response, send_from_directory, redirect
 from flask_session import Session
 from googleapiclient.discovery import build
@@ -32,6 +34,7 @@ city_to_zip = {
 }
 
 redis_client = redis.from_url(REDIS_URL)
+executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 # === CATBOX THINKING MP3 URLs ===
 THINKING_MP3_URLS = [
@@ -173,6 +176,52 @@ def clear_conversation(sid):
     redis_client.delete(key)
     print(f"LEAVING clear_conversation({sid})")
 
+def async_generate_response(sid, messages, user_zip):
+    def task():
+        try:
+            print(f"[Async] Starting async_generate_response for {sid}")
+            gpt_reply = ""
+            if user_zip:
+                creds = load_credentials()
+                if creds and creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+                service = build('calendar', 'v3', credentials=creds)
+                now = datetime.datetime.utcnow().isoformat() + 'Z'
+                events = service.events().list(calendarId='primary', timeMin=now,
+                                               maxResults=10, singleEvents=True,
+                                               orderBy='startTime').execute().get('items', [])
+                matches = get_calendar_zip_matches(user_zip, events)
+                calendar_prompt = build_zip_prompt(user_zip, matches)
+                messages.append({"role": "assistant", "content": calendar_prompt})
+
+            print(f"[Async] OpenAI chat history for {sid}: {messages}")
+            client = openai.OpenAI(api_key=OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                stream=True
+            )
+            for chunk in response:
+                if hasattr(chunk.choices[0].delta, "content"):
+                    gpt_reply += chunk.choices[0].delta.content or ""
+            print(f"[Async] Final GPT reply for {sid}: '{gpt_reply}'")
+
+            history = load_conversation(sid)
+            history.append({"role": "assistant", "content": gpt_reply})
+            save_conversation(sid, history)
+
+            reply_filename = synthesize_speech(gpt_reply)
+            if reply_filename:
+                redis_client.set(f"pending_mp3:{sid}", reply_filename, ex=600)
+                print(f"[Async] Saved mp3 '{reply_filename}' for {sid}")
+            else:
+                redis_client.set(f"pending_mp3:{sid}", "error", ex=600)
+                print(f"[Async] Failed TTS for {sid}")
+        except Exception as e:
+            redis_client.set(f"pending_mp3:{sid}", "error", ex=600)
+            print(f"[Async] Exception in async_generate_response for {sid}: {e}")
+    executor.submit(task)
+
 @app.route("/test-openai", methods=["GET"])
 def test_openai():
     print("ENTER /test-openai")
@@ -201,140 +250,19 @@ def static_files(filename):
 
 @app.route("/voice-greeting", methods=["POST", "GET"])
 def voice_greeting():
-    # === OUTBOUND & AMD LOGIC ADDED ===
     print("ENTER /voice-greeting")
     sid = request.values.get("CallSid") or request.values.get("sid") or request.args.get("sid") or str(uuid.uuid4())
     greeting_url = "https://files.catbox.moe/lmmt31.mp3"
-
-    # AMD logic - if AnsweredBy=machine, go to voicemail drop
     answered_by = (request.values.get("AnsweredBy") or "").lower()
     print(f"AnsweredBy: {answered_by}")
-
-    # Twilio AMD returns things like "machine", "fax", "human", etc.
     if answered_by in ["machine", "fax", "unknown_machine"]:
         print("Detected answering machine. Redirecting to /voicemail for voicemail drop.")
         return redirect("/voicemail", code=307)  # 307 keeps POST data
-
     print(f"New inbound/outbound call, SID: {sid}. Greeting will play from {greeting_url}")
     print("LEAVING /voice-greeting")
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
-        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" speechTimeout="auto" />
-    </Response>
-    """, mimetype="application/xml")
-
-@app.route("/response", methods=["POST", "GET"])
-def response_route():
-    print("ENTER /response_route")  # <----- PINPOINT LOG
-    HARD_CODED_MODE = False
-
-    sid = (
-        request.values.get("sid")
-        or request.args.get("sid")
-        or request.values.get("CallSid")
-        or request.args.get("CallSid")
-    )
-    print(f"SID received in /response: {sid}")
-
-    if not sid:
-        print("❌ SID missing! Returning early error (missing session ID).")
-        print("LEAVING /response_route (SID missing)")
-        return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
-
-    history = load_conversation(sid)
-    user_zip = redis_client.get(f"zip:{sid}")
-    user_zip = user_zip.decode() if user_zip else None
-    print(f"user_zip: {user_zip}")
-
-    # SYSTEM PROMPT - This will **always** be the first message
-    SYSTEM_PROMPT = {
-        "role": "system",
-        "content": (
-             "You are a helpful sales assistant for a premium high end air duct cleaning company that has been in business for 37 years. "
-        "Backed by our 5 star review rating on all platforms, we are the most high end air quality company you can find. "
-        "We are a state licensed mold remediation contractor, & we do dryer vent cleaning for free when we clean the HVAC system as well. Respond conversationally & professionally. "
-        "Great customer service is very important. If it is an outbound call then your goal should be to book them for a free estimate by asking for their ZIP code. "
-        "Then cross reference our google calendar to find a time we will be in their area. If it is an inbound call & they say they are looking to get a quote, price, or estimate, your goal should be to book an estimate. "
-        "UNDER NO CIRCUMSTANCES should you ever give a price, quote, average, ballpark, or estimate over the phone or via text. "
-        "If the customer asks for a price, quote, estimate, or ballpark, politely explain that our company policy is to do a free in-person inspection so we can give the most accurate, customized estimate based on the specific needs of their home. We don't like to play the add-on or upcharge game. Whatever price we give you will stay there!"
-        "Always redirect the conversation toward booking a free in-person estimate, never giving any numbers. "
-        "Sample response: 'We actually never give prices or ballpark estimates over the phone because every home is different. We don't like to play the add-on or upcharge game. So whatever price we give you will stay there. We take pride in doing things the right way. What day works best for you to have one of our experts come out?'"
-        )
-    }
-
-    messages = [SYSTEM_PROMPT]
-    for msg in history:
-        if msg.get("role") == "system":
-            continue
-        messages.append(msg)
-
-    print("About to enter try/except block")
-
-    if HARD_CODED_MODE:
-        gpt_reply = "Hello, this is a test of ElevenLabs speech and your static folder. If you hear this, everything is working up to this point!"
-    else:
-        gpt_reply = ""
-        try:
-            if user_zip:
-                creds = load_credentials()
-                if not creds:
-                    print("❌ Failed to get Google creds. Returning error.")
-                    print("LEAVING /response_route (Google creds fail)")
-                    return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
-                if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                service = build('calendar', 'v3', credentials=creds)
-                now = datetime.datetime.utcnow().isoformat() + 'Z'
-                events = service.events().list(calendarId='primary', timeMin=now,
-                                               maxResults=10, singleEvents=True,
-                                               orderBy='startTime').execute().get('items', [])
-                matches = get_calendar_zip_matches(user_zip, events)
-                calendar_prompt = build_zip_prompt(user_zip, matches)
-                messages.append({"role": "assistant", "content": calendar_prompt})
-
-            print("OpenAI chat history:", messages)
-            client = openai.OpenAI(api_key=OPENAI_API_KEY)
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                stream=True
-            )
-            for chunk in response:
-                print('Got OpenAI chunk:', chunk)
-                if hasattr(chunk.choices[0].delta, "content"):
-                    gpt_reply += chunk.choices[0].delta.content or ""
-            print(f"Final GPT reply: '{gpt_reply}'")
-
-            if not gpt_reply.strip():
-                print("GPT reply was empty after OpenAI call. Returning error to caller.")
-                gpt_reply = "Sorry, there was an issue with my response. Can you try again?"
-
-        except Exception as e:
-            import traceback
-            tb = traceback.format_exc()
-            print(f"❌ GPT generation error: {e}\n{tb}")
-            print("Returning error: Sorry, there was an error processing your request (OpenAI/other except).")
-            print("LEAVING /response_route (OpenAI fail)")
-            return Response("<Response><Say>Sorry, there was an error processing your request.</Say></Response>", mimetype="application/xml")
-
-    print(f"🤖 GPT reply to synthesize: {gpt_reply}")
-    history.append({"role": "assistant", "content": gpt_reply})
-    save_conversation(sid, history)
-
-    reply_filename = synthesize_speech(gpt_reply)
-    print("Reply filename to play:", reply_filename)
-    if not reply_filename:
-        print("❌ Failed to synthesize speech or save file! Returning error to caller.")
-        print("LEAVING /response_route (TTS fail)")
-        return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
-
-    play_url = f"https://{request.host}/static/{reply_filename}"
-    print("Returning TwiML to play:", play_url)
-    print("LEAVING /response_route (SUCCESS)")
-    return Response(f"""
-    <Response>
-        <Play>{play_url}</Play>
         <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" speechTimeout="auto" />
     </Response>
     """, mimetype="application/xml")
@@ -361,9 +289,31 @@ def voice_route():
         print("❌ No speech recognized from caller.")
     save_conversation(sid, history)
 
-    # === THINKING MP3 NO-REPEAT PATCH ===
-    thinking_url = get_next_thinking_url(sid)
+    # === Build GPT messages and kick off async ===
+    SYSTEM_PROMPT = {
+        "role": "system",
+        "content": (
+             "You are a helpful sales assistant for a premium high end air duct cleaning company that has been in business for 37 years. "
+            "Backed by our 5 star review rating on all platforms, we are the most high end air quality company you can find. "
+            "We are a state licensed mold remediation contractor, & we do dryer vent cleaning for free when we clean the HVAC system as well. Respond conversationally & professionally. "
+            "Great customer service is very important. If it is an outbound call then your goal should be to book them for a free estimate by asking for their ZIP code. "
+            "Then cross reference our google calendar to find a time we will be in their area. If it is an inbound call & they say they are looking to get a quote, price, or estimate, your goal should be to book an estimate. "
+            "UNDER NO CIRCUMSTANCES should you ever give a price, quote, average, ballpark, or estimate over the phone or via text. "
+            "If the customer asks for a price, quote, estimate, or ballpark, politely explain that our company policy is to do a free in-person inspection so we can give the most accurate, customized estimate based on the specific needs of their home. We don't like to play the add-on or upcharge game. Whatever price we give you will stay there!"
+            "Always redirect the conversation toward booking a free in-person estimate, never giving any numbers. "
+            "Sample response: 'We actually never give prices or ballpark estimates over the phone because every home is different. We don't like to play the add-on or upcharge game. So whatever price we give you will stay there. We take pride in doing things the right way. What day works best for you to have one of our experts come out?'"
+        )
+    }
+    messages = [SYSTEM_PROMPT]
+    for msg in history:
+        if msg.get("role") == "system":
+            continue
+        messages.append(msg)
+    user_zip = redis_client.get(f"zip:{sid}")
+    user_zip = user_zip.decode() if user_zip else None
+    async_generate_response(sid, messages, user_zip)
 
+    thinking_url = get_next_thinking_url(sid)
     print("Playing thinking message:", thinking_url)
     print(f"Redirecting to /response for SID {sid}")
     print("LEAVING /voice")
@@ -374,9 +324,48 @@ def voice_route():
     </Response>
     """, mimetype="application/xml")
 
+@app.route("/response", methods=["POST", "GET"])
+def response_route():
+    print("ENTER /response_route")  # <----- PINPOINT LOG
+    sid = (
+        request.values.get("sid")
+        or request.args.get("sid")
+        or request.values.get("CallSid")
+        or request.args.get("CallSid")
+    )
+    print(f"SID received in /response: {sid}")
+
+    if not sid:
+        print("❌ SID missing! Returning early error (missing session ID).")
+        print("LEAVING /response_route (SID missing)")
+        return Response("<Response><Say>Missing session ID.</Say></Response>", mimetype="application/xml")
+
+    # Wait up to 7.5 seconds for async reply to finish
+    for _ in range(15):
+        mp3_filename = redis_client.get(f"pending_mp3:{sid}")
+        if mp3_filename:
+            mp3_filename = mp3_filename.decode()
+            if mp3_filename == "error":
+                print(f"❌ Failed to synthesize speech or save file! Returning error to caller for SID {sid}")
+                print("LEAVING /response_route (TTS fail)")
+                return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
+            play_url = f"https://{request.host}/static/{mp3_filename}"
+            print("Returning TwiML to play:", play_url)
+            print("LEAVING /response_route (SUCCESS)")
+            return Response(f"""
+            <Response>
+                <Play>{play_url}</Play>
+                <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" speechTimeout="auto" />
+            </Response>
+            """, mimetype="application/xml")
+        time.sleep(0.5)
+    # Timed out waiting for reply
+    print("❌ Timed out waiting for async reply. Returning error to caller for SID", sid)
+    print("LEAVING /response_route (timeout)")
+    return Response("<Response><Say>Sorry, your response took too long to generate. Please try again.</Say></Response>", mimetype="application/xml")
+
 @app.route("/voicemail", methods=["POST", "GET"])
 def voicemail_route():
-    # === VOICEMAIL DROP ===
     voicemail_url = "https://files.catbox.moe/0ugvt7.mp3"
     print(f"Voicemail drop initiated, playing: {voicemail_url}")
     return Response(f"""
