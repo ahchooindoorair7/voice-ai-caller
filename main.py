@@ -6,9 +6,10 @@ import requests
 import openai
 import re
 import redis
-import random  # Needed for random thinking MP3 selection
+import random
 import concurrent.futures
 import time
+import dateutil.parser  # <-- Added for better datetime formatting
 from flask import Flask, request, Response, send_from_directory, redirect
 from flask_session import Session
 from googleapiclient.discovery import build
@@ -52,7 +53,6 @@ THINKING_MP3_URLS = [
     "https://files.catbox.moe/3mf7m8.mp3"
 ]
 
-# === THINKING MP3 NO-REPEAT PATCH ===
 def get_next_thinking_url(sid):
     key_played = f"thinking_played:{sid}"
     played = redis_client.lrange(key_played, 0, -1)
@@ -128,9 +128,22 @@ def get_calendar_zip_matches(user_zip, events):
             matches.append(start)
     return matches
 
+# === NEW: Nicely format calendar times for agent responses ===
+def format_event_time(dt_str):
+    try:
+        dt = dateutil.parser.parse(dt_str)
+        day_suffix = lambda d: 'th' if 11<=d<=13 else {1:'st',2:'nd',3:'rd'}.get(d%10, 'th')
+        # Use %-I if your environment supports it; otherwise, switch to %I for zero-padded hours.
+        formatted_date = dt.strftime(f"%A, %B {dt.day}{day_suffix(dt.day)} at %-I:%M %p")
+        return formatted_date
+    except Exception as e:
+        print(f"Failed to format event time: {dt_str} - {e}")
+        return dt_str
+
 def build_zip_prompt(user_zip, matches):
     if matches:
-        return f"We’ll already be in your area ({user_zip}) at {', '.join(matches[:2])}. Would one of those work for a free estimate?"
+        formatted_times = [format_event_time(dt) for dt in matches[:2]]
+        return f"We’ll already be in your area ({user_zip}) at {', '.join(formatted_times)}. Would one of those work for a free estimate?"
     else:
         return f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day & time works best?"
 
