@@ -9,7 +9,7 @@ import redis
 import random
 import concurrent.futures
 import time
-import dateutil.parser  # <-- Added for better datetime formatting
+import dateutil.parser
 from flask import Flask, request, Response, send_from_directory, redirect
 from flask_session import Session
 from googleapiclient.discovery import build
@@ -27,6 +27,12 @@ ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN")
 REDIS_URL = os.environ.get("REDIS_URL")
+
+# Twilio SMS notification vars (set these in Render dashboard!)
+TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
+TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
+OWNER_PHONE_NUMBER = os.environ.get("OWNER_PHONE_NUMBER")  # your cell
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 city_to_zip = {
@@ -128,12 +134,10 @@ def get_calendar_zip_matches(user_zip, events):
             matches.append(start)
     return matches
 
-# === NEW: Nicely format calendar times for agent responses ===
 def format_event_time(dt_str):
     try:
         dt = dateutil.parser.parse(dt_str)
         day_suffix = lambda d: 'th' if 11<=d<=13 else {1:'st',2:'nd',3:'rd'}.get(d%10, 'th')
-        # Use %-I if your environment supports it; otherwise, switch to %I for zero-padded hours.
         formatted_date = dt.strftime(f"%A, %B {dt.day}{day_suffix(dt.day)} at %-I:%M %p")
         return formatted_date
     except Exception as e:
@@ -157,7 +161,7 @@ def load_credentials():
         return None
     try:
         data = json.loads(token_json)
-        creds = Credentials.from_authorized_user_info(data, SCOPES)
+        creds = Credentials.from_authorized_user_info(data, ['https://www.googleapis.com/auth/calendar.readonly'])
         print("LEAVING load_credentials()")
         return creds
     except Exception as e:
@@ -188,6 +192,33 @@ def clear_conversation(sid):
     key = f"history:{sid}"
     redis_client.delete(key)
     print(f"LEAVING clear_conversation({sid})")
+
+# === NEW: Function to text booking details to your phone ===
+def text_booking_to_owner(date_time, name, address, phone, notes=None):
+    try:
+        if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER and OWNER_PHONE_NUMBER):
+            print("Twilio SMS notification vars not all set!")
+            return False
+        from twilio.rest import Client
+        client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        message = (
+            f"🗓️ New Air Duct Estimate Booking!\n"
+            f"Address: {address}\n"
+            f"Date/Time: {date_time}\n"
+            f"Phone: {phone}\n"
+        )
+        if notes:
+            message += f"Notes: {notes}"
+        client.messages.create(
+            to=OWNER_PHONE_NUMBER,
+            from_=TWILIO_FROM_NUMBER,
+            body=message
+        )
+        print("Texted booking to owner successfully.")
+        return True
+    except Exception as e:
+        print(f"Failed to send booking SMS: {e}")
+        return False
 
 def async_generate_response(sid, messages, user_zip):
     def task():
@@ -227,9 +258,21 @@ def async_generate_response(sid, messages, user_zip):
             if reply_filename:
                 redis_client.set(f"pending_mp3:{sid}", reply_filename, ex=600)
                 print(f"[Async] Saved mp3 '{reply_filename}' for {sid}")
-            else:
-                redis_client.set(f"pending_mp3:{sid}", "error", ex=600)
-                print(f"[Async] Failed TTS for {sid}")
+
+            # === TRIGGER BOOKING SMS (example logic, see below for details) ===
+            # Check if this reply confirms a booking and you have name/address/time/phone:
+            # This is demo logic! In production, parse the booking details from the convo/history or add your own trigger.
+            if "you're booked" in gpt_reply.lower():
+                # Demo: Try to get details from your session/store
+                booking_address = redis_client.get(f"address:{sid}")
+                booking_time = redis_client.get(f"time:{sid}")
+                caller_number = redis_client.get(f"phone:{sid}")
+                # Fallback to N/A if not found
+                booking_address = booking_address.decode() if booking_address else "N/A"
+                booking_time = booking_time.decode() if booking_time else "N/A"
+                caller_number = caller_number.decode() if caller_number else "N/A"
+                text_booking_to_owner(booking_time, booking_name, booking_address, caller_number)
+
         except Exception as e:
             redis_client.set(f"pending_mp3:{sid}", "error", ex=600)
             print(f"[Async] Exception in async_generate_response for {sid}: {e}")
@@ -276,7 +319,7 @@ def voice_greeting():
     return Response(f"""
     <Response>
         <Play>{greeting_url}</Play>
-        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="10" speechTimeout="auto" />
+        <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="12" speechTimeout="auto" />
     </Response>
     """, mimetype="application/xml")
 
@@ -298,11 +341,25 @@ def voice_route():
         zip_found = extract_zip_or_city(user_input)
         if zip_found:
             redis_client.set(f"zip:{sid}", zip_found, ex=900)
+        # === DEMO: Try to capture booking info from user input (You may want more robust NLP!) ===
+        # Very basic keyword check; for a real system, use NLP or GPT function-calling.
+        if "name is" in user_input.lower():
+            possible_name = user_input.split("name is")[-1].strip().split()[0:3]
+            redis_client.set(f"name:{sid}", " ".join(possible_name), ex=900)
+        if "address is" in user_input.lower():
+            possible_address = user_input.split("address is")[-1].strip().split(",")[0:2]
+            redis_client.set(f"address:{sid}", ", ".join(possible_address), ex=900)
+        if re.search(r"\b\d{1,2}[:.]\d{2}\s*(am|pm)?\b", user_input.lower()):
+            # Very simple time extractor (e.g., "at 3:00 PM")
+            redis_client.set(f"time:{sid}", user_input, ex=900)
+        # Save phone number automatically
+        caller_number = request.values.get("From")
+        if caller_number:
+            redis_client.set(f"phone:{sid}", caller_number, ex=900)
     else:
         print("❌ No speech recognized from caller.")
     save_conversation(sid, history)
 
-    # === Build GPT messages and kick off async ===
     SYSTEM_PROMPT = {
         "role": "system",
         "content": (
@@ -339,7 +396,7 @@ def voice_route():
 
 @app.route("/response", methods=["POST", "GET"])
 def response_route():
-    print("ENTER /response_route")  # <----- PINPOINT LOG
+    print("ENTER /response_route")
     sid = (
         request.values.get("sid")
         or request.args.get("sid")
@@ -368,11 +425,10 @@ def response_route():
             return Response(f"""
             <Response>
                 <Play>{play_url}</Play>
-                <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="5" speechTimeout="auto" />
+                <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="12" speechTimeout="auto" />
             </Response>
             """, mimetype="application/xml")
         time.sleep(0.5)
-    # Timed out waiting for reply
     print("❌ Timed out waiting for async reply. Returning error to caller for SID", sid)
     print("LEAVING /response_route (timeout)")
     return Response("<Response><Say>Sorry, your response took too long to generate. Please try again.</Say></Response>", mimetype="application/xml")
