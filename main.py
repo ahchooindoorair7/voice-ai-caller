@@ -58,7 +58,7 @@ THINKING_MP3_URLS = [
 ]
 
 # === Your closing MP3 (replace with your real link!) ===
-CLOSING_MP3_URL = "https://files.catbox.moe/exampleclosing.mp3"  # <-- CHANGE THIS!
+CLOSING_MP3_URL = "https://files.catbox.moe/sxjdxb.mp3"  # <-- CHANGE THIS!
 
 def get_next_thinking_url(sid):
     key_played = f"thinking_played:{sid}"
