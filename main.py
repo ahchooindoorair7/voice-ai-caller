@@ -28,11 +28,10 @@ ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID")
 GOOGLE_TOKEN = os.environ.get("GOOGLE_TOKEN")
 REDIS_URL = os.environ.get("REDIS_URL")
 
-# Twilio SMS notification vars (set these in Render dashboard!)
 TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
-OWNER_PHONE_NUMBER = os.environ.get("OWNER_PHONE_NUMBER")  # your cell
+OWNER_PHONE_NUMBER = os.environ.get("OWNER_PHONE_NUMBER")
 
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
 city_to_zip = {
@@ -43,7 +42,6 @@ city_to_zip = {
 redis_client = redis.from_url(REDIS_URL)
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
-# === CATBOX THINKING MP3 URLs ===
 THINKING_MP3_URLS = [
     "https://files.catbox.moe/pxo487.mp3",
     "https://files.catbox.moe/s5b3c0.mp3",
@@ -113,7 +111,7 @@ def synthesize_speech(text):
         print("LEAVING synthesize_speech()")
         return None
     print("LEAVING synthesize_speech()")
-    return filename  # just the filename
+    return filename
 
 def extract_zip_or_city(text):
     zip_match = re.search(r'\b77\d{3}\b', text)
@@ -122,6 +120,16 @@ def extract_zip_or_city(text):
     for city in city_to_zip:
         if city in text.lower():
             return city_to_zip[city]
+    return None
+
+def extract_address(text):
+    # Basic address pattern: number, street, city, ZIP
+    address_match = re.search(r'\d{1,5} .+?(?:\bHouston\b|\bTX\b|77\d{3})[^\d]*', text, re.IGNORECASE)
+    if address_match:
+        return address_match.group(0).strip()
+    # fallback: just grab the whole user response if they say "address is"
+    if "address" in text.lower():
+        return text.split("address")[-1].strip(" :,-.")
     return None
 
 def get_calendar_zip_matches(user_zip, events):
@@ -161,7 +169,7 @@ def load_credentials():
         return None
     try:
         data = json.loads(token_json)
-        creds = Credentials.from_authorized_user_info(data, ['https://www.googleapis.com/auth/calendar.readonly'])
+        creds = Credentials.from_authorized_user_info(data, SCOPES)
         print("LEAVING load_credentials()")
         return creds
     except Exception as e:
@@ -193,8 +201,7 @@ def clear_conversation(sid):
     redis_client.delete(key)
     print(f"LEAVING clear_conversation({sid})")
 
-# === NEW: Function to text booking details to your phone ===
-def text_booking_to_owner(date_time, name, address, phone, notes=None):
+def text_booking_to_owner(date_time, address, phone, notes=None):
     try:
         if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER and OWNER_PHONE_NUMBER):
             print("Twilio SMS notification vars not all set!")
@@ -259,50 +266,23 @@ def async_generate_response(sid, messages, user_zip):
                 redis_client.set(f"pending_mp3:{sid}", reply_filename, ex=600)
                 print(f"[Async] Saved mp3 '{reply_filename}' for {sid}")
 
-            # === TRIGGER BOOKING SMS (example logic, see below for details) ===
-            # Check if this reply confirms a booking and you have name/address/time/phone:
-            # This is demo logic! In production, parse the booking details from the convo/history or add your own trigger.
-            if "you're booked" in gpt_reply.lower():
-                # Demo: Try to get details from your session/store
-                booking_address = redis_client.get(f"address:{sid}")
-                booking_time = redis_client.get(f"time:{sid}")
-                caller_number = redis_client.get(f"phone:{sid}")
-                # Fallback to N/A if not found
-                booking_address = booking_address.decode() if booking_address else "N/A"
-                booking_time = booking_time.decode() if booking_time else "N/A"
-                caller_number = caller_number.decode() if caller_number else "N/A"
-                text_booking_to_owner(booking_time, booking_name, booking_address, caller_number)
+            # If we have both booking time & address, text owner!
+            booking_time = redis_client.get(f"time:{sid}")
+            booking_address = redis_client.get(f"address:{sid}")
+            caller_number = redis_client.get(f"phone:{sid}")
+            if booking_time and booking_address and caller_number:
+                # To prevent duplicate notifications, set a flag
+                if not redis_client.get(f"notified:{sid}"):
+                    redis_client.set(f"notified:{sid}", "1", ex=1800)
+                    booking_time = booking_time.decode()
+                    booking_address = booking_address.decode()
+                    caller_number = caller_number.decode()
+                    text_booking_to_owner(booking_time, booking_address, caller_number)
 
         except Exception as e:
             redis_client.set(f"pending_mp3:{sid}", "error", ex=600)
             print(f"[Async] Exception in async_generate_response for {sid}: {e}")
     executor.submit(task)
-
-@app.route("/test-openai", methods=["GET"])
-def test_openai():
-    print("ENTER /test-openai")
-    try:
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": "Say hello!"}
-            ]
-        )
-        print("LEAVING /test-openai")
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"❌ OpenAI API test failed: {e}")
-        print("LEAVING /test-openai")
-        return f"❌ OpenAI API test failed: {e}"
-
-@app.route("/static/<path:filename>")
-def static_files(filename):
-    print("ENTER /static/<path:filename>")
-    response = send_from_directory('static', filename)
-    print("LEAVING /static/<path:filename>")
-    return response
 
 @app.route("/voice-greeting", methods=["POST", "GET"])
 def voice_greeting():
@@ -313,7 +293,7 @@ def voice_greeting():
     print(f"AnsweredBy: {answered_by}")
     if answered_by in ["machine", "fax", "unknown_machine"]:
         print("Detected answering machine. Redirecting to /voicemail for voicemail drop.")
-        return redirect("/voicemail", code=307)  # 307 keeps POST data
+        return redirect("/voicemail", code=307)
     print(f"New inbound/outbound call, SID: {sid}. Greeting will play from {greeting_url}")
     print("LEAVING /voice-greeting")
     return Response(f"""
@@ -341,39 +321,46 @@ def voice_route():
         zip_found = extract_zip_or_city(user_input)
         if zip_found:
             redis_client.set(f"zip:{sid}", zip_found, ex=900)
-        # === DEMO: Try to capture booking info from user input (You may want more robust NLP!) ===
-        # Very basic keyword check; for a real system, use NLP or GPT function-calling.
-        if "name is" in user_input.lower():
-            possible_name = user_input.split("name is")[-1].strip().split()[0:3]
-            redis_client.set(f"name:{sid}", " ".join(possible_name), ex=900)
-        if "address is" in user_input.lower():
-            possible_address = user_input.split("address is")[-1].strip().split(",")[0:2]
-            redis_client.set(f"address:{sid}", ", ".join(possible_address), ex=900)
-        if re.search(r"\b\d{1,2}[:.]\d{2}\s*(am|pm)?\b", user_input.lower()):
-            # Very simple time extractor (e.g., "at 3:00 PM")
-            redis_client.set(f"time:{sid}", user_input, ex=900)
-        # Save phone number automatically
+
+        # Always save phone number from Twilio
         caller_number = request.values.get("From")
         if caller_number:
             redis_client.set(f"phone:{sid}", caller_number, ex=900)
+
+        # Booking time detection (AI can prompt user to say e.g., "Tuesday at 10am" etc.)
+        # For simplicity, we use the last assistant reply to look for offered time
+        if "at" in user_input.lower() and any(x in user_input.lower() for x in ["am", "pm", ":"]):
+            # Save the proposed time (AI could prompt more specifically)
+            redis_client.set(f"time:{sid}", user_input, ex=900)
+
+        # If user provides address after being prompted for it
+        address = extract_address(user_input)
+        if address:
+            redis_client.set(f"address:{sid}", address, ex=900)
     else:
         print("❌ No speech recognized from caller.")
     save_conversation(sid, history)
 
+    # === Prompt logic: Only ask for address AFTER time is picked and not before ===
     SYSTEM_PROMPT = {
         "role": "system",
         "content": (
-             "You are a helpful sales assistant for a premium high end air duct cleaning company that has been in business for 37 years. "
-            "Backed by our 5 star review rating on all platforms, we are the most high end air quality company you can find. "
-            "We are a state licensed mold remediation contractor, & we do dryer vent cleaning for free when we clean the HVAC system as well. Respond conversationally & professionally. "
-            "Great customer service is very important. If it is an outbound call then your goal should be to book them for a free estimate by asking for their ZIP code. "
-            "Then cross reference our google calendar to find a time we will be in their area. If it is an inbound call & they say they are looking to get a quote, price, or estimate, your goal should be to book an estimate. "
-            "UNDER NO CIRCUMSTANCES should you ever give a price, quote, average, ballpark, or estimate over the phone or via text. "
-            "If the customer asks for a price, quote, estimate, or ballpark, politely explain that our company policy is to do a free in-person inspection so we can give the most accurate, customized estimate based on the specific needs of their home. We don't like to play the add-on or upcharge game. Whatever price we give you will stay there!"
-            "Always redirect the conversation toward booking a free in-person estimate, never giving any numbers. "
-            "Sample response: 'We actually never give prices or ballpark estimates over the phone because every home is different. We don't like to play the add-on or upcharge game. So whatever price we give you will stay there. We take pride in doing things the right way. What day works best for you to have one of our experts come out?'"
+            "You are a helpful sales assistant for a premium high end air duct cleaning company in Houston. "
+            "Your goal is to book a free in-person estimate. "
+            "First, always ask for the customer's ZIP code and find available estimate days/times near their ZIP. "
+            "Once a date and time is agreed upon, THEN ask for their full address (never before). "
+            "Do not ask for the customer's name or phone number—use the phone number from the call. "
+            "Once both the appointment time and address are collected, confirm the booking and thank them."
+            "If the address is not collected after confirming a time, say: 'Perfect! To finish booking, can I get the full address where you'd like us to come for your estimate?'"
         )
     }
+
+    # If a time is set but no address, force the AI to ask for the address in the next reply
+    booking_time = redis_client.get(f"time:{sid}")
+    booking_address = redis_client.get(f"address:{sid}")
+    if booking_time and not booking_address:
+        history.append({"role": "user", "content": "The time and date are confirmed."})
+
     messages = [SYSTEM_PROMPT]
     for msg in history:
         if msg.get("role") == "system":
