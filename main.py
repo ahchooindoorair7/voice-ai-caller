@@ -57,6 +57,9 @@ THINKING_MP3_URLS = [
     "https://files.catbox.moe/3mf7m8.mp3"
 ]
 
+# === Your closing MP3 (replace with your real link!) ===
+CLOSING_MP3_URL = "https://files.catbox.moe/exampleclosing.mp3"  # <-- CHANGE THIS!
+
 def get_next_thinking_url(sid):
     key_played = f"thinking_played:{sid}"
     played = redis_client.lrange(key_played, 0, -1)
@@ -236,7 +239,11 @@ def async_generate_response(sid, messages, user_zip, caller_number):
                                                maxResults=10, singleEvents=True,
                                                orderBy='startTime').execute().get('items', [])
                 matches = get_calendar_zip_matches(user_zip, events)
-                calendar_prompt = build_zip_prompt(user_zip, matches)
+                formatted_times = [format_event_time(dt) for dt in matches[:2]]
+                if formatted_times:
+                    calendar_prompt = f"We’ll already be in your area ({user_zip}) at {', '.join(formatted_times)}. Would one of those work for a free estimate?"
+                else:
+                    calendar_prompt = f"We’re not currently scheduled in {user_zip}, but I can open up time for you. What day & time works best?"
                 messages.append({"role": "assistant", "content": calendar_prompt})
 
             # Call OpenAI with function calling
@@ -318,9 +325,9 @@ def voice_route():
     history = load_conversation(sid)
     if user_input:
         history.append({"role": "user", "content": user_input})
-        zip_found = extract_zip_or_city(user_input)
+        zip_found = re.search(r'\b77\d{3}\b', user_input)
         if zip_found:
-            redis_client.set(f"zip:{sid}", zip_found, ex=900)
+            redis_client.set(f"zip:{sid}", zip_found.group(0), ex=900)
         # Always save phone number from Twilio
         if caller_number:
             redis_client.set(f"phone:{sid}", caller_number, ex=900)
@@ -384,15 +391,35 @@ def response_route():
                 print(f"❌ Failed to synthesize speech or save file! Returning error to caller for SID {sid}")
                 print("LEAVING /response_route (TTS fail)")
                 return Response("<Response><Say>Sorry, there was an error playing the response.</Say></Response>", mimetype="application/xml")
-            play_url = f"https://{request.host}/static/{mp3_filename}"
-            print("Returning TwiML to play:", play_url)
-            print("LEAVING /response_route (SUCCESS)")
-            return Response(f"""
-            <Response>
-                <Play>{play_url}</Play>
-                <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="12" speechTimeout="auto" />
-            </Response>
-            """, mimetype="application/xml")
+
+            # --- Only play closing MP3 for successful bookings ---
+            booking_time = redis_client.get(f"time:{sid}")
+            booking_address = redis_client.get(f"address:{sid}")
+            booking_notified = redis_client.get(f"notified:{sid}")
+            closed = redis_client.get(f"closed:{sid}")
+
+            if booking_time and booking_address and booking_notified and not closed:
+                redis_client.set(f"closed:{sid}", "1", ex=1800)
+                play_url = f"https://{request.host}/static/{mp3_filename}"
+                print("Returning TwiML: confirmation and closing mp3, then hang up.")
+                print("LEAVING /response_route (SUCCESS - booked/closed)")
+                return Response(f"""
+                <Response>
+                    <Play>{play_url}</Play>
+                    <Play>{CLOSING_MP3_URL}</Play>
+                    <Hangup/>
+                </Response>
+                """, mimetype="application/xml")
+            else:
+                play_url = f"https://{request.host}/static/{mp3_filename}"
+                print("Returning TwiML to play:", play_url)
+                print("LEAVING /response_route (continue conversation)")
+                return Response(f"""
+                <Response>
+                    <Play>{play_url}</Play>
+                    <Gather input="speech" action="/voice?sid={sid}" method="POST" timeout="12" speechTimeout="auto" />
+                </Response>
+                """, mimetype="application/xml")
         time.sleep(0.5)
     print("❌ Timed out waiting for async reply. Returning error to caller for SID", sid)
     print("LEAVING /response_route (timeout)")
