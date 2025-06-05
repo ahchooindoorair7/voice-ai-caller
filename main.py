@@ -40,8 +40,8 @@ city_to_zip = {
 redis_client = redis.from_url(REDIS_URL)
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
-GREETING_MP3_URL = "https://files.catbox.moe/lmmt31.mp3"
-CLOSING_MP3_URL = "https://files.catbox.moe/sxjdxb.mp3"
+GREETING_MP3_URL = "https://files.catbox.moe/tajfjq.mp3"
+CLOSING_MP3_URL = "https://files.catbox.moe/w4f2tu.mp3"
 
 # --- FLASK APP FOR TWILIO HOOKS
 app = Flask(__name__)
@@ -152,7 +152,7 @@ def voice_greeting():
         return redirect("/voicemail", code=307)
     return Response(f"""
     <Response>
-        <Play>{GREETING_MP3_URL}</Play>
+        <Play>https://files.catbox.moe/tajfjq.mp3</Play>
         <Start>
             <Stream url="wss://{request.host}/ws?sid={sid}" />
         </Start>
