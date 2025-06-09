@@ -10,3 +10,5 @@ redis
 gunicorn
 python-dateutil
 websockets
+flask-socketio
+eventlet
