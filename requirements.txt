@@ -9,3 +9,4 @@ flask_session
 redis
 gunicorn
 python-dateutil
+websockets
